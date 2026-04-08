@@ -142,7 +142,8 @@ if __name__ == '__main__':
         url='https://github.com/modelscope/ms-swift',
         packages=find_packages(exclude=('tests', 'tests.*')),
         include_package_data=True,
-        package_data={'': ['utils/*', 'dataset/data/*.*', 'config/*.json', 'loss_scale/config/*.json']},
+        package_data={'': ['utils/*', 'dataset/data/*.*', 'config/*.json', 'loss_scale/config/*.json',
+                           'ui/web_ui_restful/frontend/*']},
         python_requires='>=3.8.0',
         classifiers=[
             'Development Status :: 4 - Beta',

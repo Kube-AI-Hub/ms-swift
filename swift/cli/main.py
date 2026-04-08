@@ -17,6 +17,7 @@ ROUTE_MAPPING: Dict[str, str] = {
     'infer': 'swift.cli.infer',
     'merge-lora': 'swift.cli.merge_lora',
     'web-ui': 'swift.cli.web_ui',
+    'web-ui-restful': 'swift.cli.web_ui_restful',
     'deploy': 'swift.cli.deploy',
     'rollout': 'swift.cli.rollout',
     'rlhf': 'swift.cli.rlhf',

@@ -9,10 +9,11 @@ from datetime import datetime
 from functools import partial
 from json import JSONDecodeError
 from transformers.utils import is_torch_cuda_available, is_torch_npu_available
+from swift.utils import is_torch_mlu_available
 from typing import Type
 
 from swift.arguments import RolloutArguments
-from swift.utils import get_device_count, get_logger
+from swift.utils import get_ui_device_info, get_logger
 from ..base import BaseUI
 from ..llm_train import run_command_in_background_with_popen
 from .external_runtime import RolloutRuntime
@@ -110,10 +111,7 @@ class LLMRollout(BaseUI):
     @classmethod
     def do_build_ui(cls, base_tab: Type['BaseUI']):
         with gr.Accordion(elem_id='llm_rollout', open=False, visible=False):
-            default_device = 'cpu'
-            device_count = get_device_count()
-            if device_count > 0:
-                default_device = '0'
+            device_choices, default_device = get_ui_device_info()
             with gr.Blocks():
                 with gr.Row():
                     gr.Textbox(elem_id='tensor_parallel_size', lines=1, value='1', scale=4)
@@ -123,7 +121,7 @@ class LLMRollout(BaseUI):
                     gr.Dropdown(
                         elem_id='rollout_gpu_id',
                         multiselect=True,
-                        choices=[str(i) for i in range(device_count)] + ['cpu'],
+                        choices=device_choices,
                         value=default_device,
                         scale=4)
                     gr.Textbox(elem_id='port', lines=1, value='8000', scale=2)
@@ -220,6 +218,9 @@ class LLMRollout(BaseUI):
             elif is_torch_cuda_available():
                 cuda_param = f'CUDA_VISIBLE_DEVICES={gpus}'
                 all_envs['CUDA_VISIBLE_DEVICES'] = gpus
+            elif is_torch_mlu_available():
+                cuda_param = f'MLU_VISIBLE_DEVICES={gpus}'
+                all_envs['MLU_VISIBLE_DEVICES'] = gpus
             else:
                 cuda_param = ''
         output_dir = 'rollout_output'

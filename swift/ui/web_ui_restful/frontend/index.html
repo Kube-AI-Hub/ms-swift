@@ -1,0 +1,2235 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SWIFT Web-UI</title>
+  <link rel="stylesheet" href="./index.css" />
+  <script src="./index-i18n.js"></script>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <h1 id="header-title">SWIFT: 轻量级大模型训练推理框架<span id="header-version" class="version-badge"></span></h1>
+    <p id="header-subtitle">请查看 <a href="https://github.com/modelscope/ms-swift/tree/main/docs/source" target="_blank">SWIFT 文档</a>来查看更多功能</p>
+  </div>
+
+  <div class="card">
+
+    <!-- ── Top tab bar ── -->
+    <div class="tabs">
+      <button class="tab active" data-target="train"  id="tab-train">LLM预训练/微调</button>
+      <button class="tab"        data-target="rlhf"   id="tab-rlhf">LLM人类对齐</button>
+      <button class="tab"        data-target="grpo"   id="tab-grpo">LLM GRPO</button>
+      <button class="tab"        data-target="infer"  id="tab-infer">LLM推理</button>
+      <button class="tab"        data-target="export" id="tab-export">LLM导出</button>
+      <button class="tab"        data-target="eval"   id="tab-eval">LLM评测</button>
+      <button class="tab"        data-target="sample" id="tab-sample">LLM采样</button>
+      <div class="tabs-right">
+        <div class="lang-toggle">
+          <span data-i18n="langLabel">语言</span>
+          <select id="lang-select">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: Train
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section active" id="section-train">
+
+      <div class="section-label" data-i18n="tabTrain">LLM预训练/微调</div>
+
+      <!-- ── Essential: Model + Dataset ── -->
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="train-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+          <span class="hint" data-i18n="hintModel">本地路径或 ModelScope / HuggingFace 模型 ID</span>
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="train-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="train-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label class="full-width tag-input-wrap">
+          <span data-i18n="fieldDataset">数据集</span>
+          <div class="tag-box" id="train-dataset-box" data-for="train-dataset">
+            <input class="tag-text-input" list="dl-datasets" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+          </div>
+          <input type="hidden" id="train-dataset" />
+          <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认；可添加多个</span>
+        </label>
+        <label>
+          <span data-i18n="fieldTrainRecord">训练记录</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="train-record" style="flex:1">
+              <option value="" data-i18n="optNoRecord">-- 无记录 --</option>
+            </select>
+            <button type="button" class="secondary" id="train-btn-clear-records" style="white-space:nowrap" data-i18n="btnClearRecords">删除记录</button>
+          </div>
+          <span class="hint" data-i18n="hintTrainRecord">选择历史训练记录可恢复参数</span>
+        </label>
+      </div>
+
+      <!-- Accordion 1: 基础配置 (open) -->
+      <div class="accordion open" id="acc-train-basic">
+        <div class="accordion-header">
+          <span data-i18n="sectionBasicConfig">基础配置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldTrainStage">训练阶段</span>
+              <select id="train-stage">
+                <option value="sft">sft</option>
+                <option value="pt">pt</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTunerType">训练方式</span>
+              <select id="train-tuner-type">
+                <option value="lora">lora</option>
+                <option value="full">full</option>
+                <option value="longlora">longlora</option>
+                <option value="adalora">adalora</option>
+                <option value="llamapro">llamapro</option>
+                <option value="vera">vera</option>
+                <option value="boft">boft</option>
+                <option value="fourierft">fourierft</option>
+                <option value="reft">reft</option>
+                <option value="lora_ga">lora_ga</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTorchDtype">训练精度</span>
+              <select id="train-torch-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldLearningRate">学习率</span>
+              <input type="text" id="train-lr" placeholder="e.g. 1e-4" />
+            </label>
+            <label>
+              <span data-i18n="fieldBatchSize">每卡训练 Batch Size</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-batch-size-slider" min="1" max="256" step="1" data-target="train-batch-size" data-default="1" />
+                <input type="number" id="train-batch-size" min="1" placeholder="1" />
+                <button type="button" class="reset-btn" data-target="train-batch-size" data-default="1" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldEpochs">训练轮数</span>
+              <input type="number" id="train-epochs" placeholder="1" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldOutputDir">输出目录</span>
+              <input type="text" id="train-output-dir" placeholder="output/" />
+            </label>
+          </div>
+          <label style="margin-top:8px">
+            <span data-i18n="fieldSystem">System Prompt</span>
+            <textarea id="train-system" rows="2" placeholder="可选"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <!-- Accordion 2: 数据集设置 (closed) -->
+      <div class="accordion" id="acc-train-dataset">
+        <div class="accordion-header">
+          <span data-i18n="sectionDatasetConfig">数据集设置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldSplitRatio">验证集拆分比例</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-split-ratio-slider" min="0" max="1" step="0.05" data-target="train-split-ratio" data-default="0" />
+                <input type="number" id="train-split-ratio" min="0" max="1" step="0.05" placeholder="0.0" />
+                <button type="button" class="reset-btn" data-target="train-split-ratio" data-default="0" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintSplitRatio">拆分到验证集的比例，0 表示不拆分</span>
+            </label>
+            <label>
+              <span data-i18n="fieldMaxLength">句子最大长度</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-max-length-slider" min="32" max="32768" step="1" data-target="train-max-length" data-default="1024" />
+                <input type="number" id="train-max-length" min="32" max="32768" placeholder="1024" />
+                <button type="button" class="reset-btn" data-target="train-max-length" data-default="1024" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintMaxLength">输入模型的最大 token 长度</span>
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="train-padding-free" />
+              <span data-i18n="fieldPaddingFree">无填充批处理</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accordion 3: LoRA 参数 (closed) -->
+      <div class="accordion" id="acc-train-lora">
+        <div class="accordion-header">
+          <span data-i18n="sectionLoraParams">LoRA 参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldLoraRank">LoRA Rank</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-lora-rank-slider" min="1" max="512" step="8" data-target="train-lora-rank" data-default="8" />
+                <input type="number" id="train-lora-rank" min="1" placeholder="8" />
+                <button type="button" class="reset-btn" data-target="train-lora-rank" data-default="8" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldLoraAlpha">LoRA Alpha</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-lora-alpha-slider" min="1" max="512" step="8" data-target="train-lora-alpha" data-default="32" />
+                <input type="number" id="train-lora-alpha" min="1" placeholder="32" />
+                <button type="button" class="reset-btn" data-target="train-lora-alpha" data-default="32" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDropout">LoRA Dropout</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-lora-dropout-slider" min="0" max="1" step="0.01" data-target="train-lora-dropout" data-default="0.05" />
+                <input type="number" id="train-lora-dropout" min="0" max="1" step="0.01" placeholder="0.05" />
+                <button type="button" class="reset-btn" data-target="train-lora-dropout" data-default="0.05" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label class="full-width">
+              <span data-i18n="fieldTargetModules">Target Modules</span>
+              <input type="text" id="train-target-modules" placeholder="all-linear" />
+              <span class="hint" data-i18n="hintTargetModules">逗号分隔，或 all-linear</span>
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDtype">LoRA Dtype</span>
+              <select id="train-lora-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="train-use-rslora" />
+              <span data-i18n="fieldUseRsLora">使用 rsLoRA</span>
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="train-use-dora" />
+              <span data-i18n="fieldUseDoRA">使用 DoRA</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accordion 4: 硬件与加速 (closed) -->
+      <div class="accordion" id="acc-train-hardware">
+        <div class="accordion-header">
+          <span data-i18n="sectionHardware">硬件与加速</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldGpuIds">选择 GPU</span>
+              <select multiple id="train-gpu-ids" size="3"></select>
+              <span class="hint" data-i18n="hintGpuIds">多个 GPU 用逗号分隔</span>
+            </label>
+            <label>
+              <span data-i18n="fieldAttnImpl">Flash Attention 类型</span>
+              <select id="train-attn-impl">
+                <option value="">auto</option>
+                <option value="sdpa">sdpa</option>
+                <option value="eager">eager</option>
+                <option value="flash_attention_2">flash_attention_2</option>
+                <option value="flash_attention_3">flash_attention_3</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldDeepspeed">DeepSpeed</span>
+              <select id="train-deepspeed">
+                <option value="">None</option>
+                <option value="zero0">zero0</option>
+                <option value="zero1">zero1</option>
+                <option value="zero2">zero2</option>
+                <option value="zero3">zero3</option>
+                <option value="zero2_offload">zero2_offload</option>
+                <option value="zero3_offload">zero3_offload</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldSeqParallel">序列并行大小</span>
+              <input type="number" id="train-seq-parallel" placeholder="1" min="1" />
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="train-use-ddp" />
+              <span data-i18n="fieldUseDdp">使用 DDP</span>
+            </label>
+            <label>
+              <span data-i18n="fieldDdpNum">DDP 分片数</span>
+              <input type="number" id="train-ddp-num" value="1" min="1" />
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="train-use-liger" />
+              <span data-i18n="fieldUseLigerKernel">使用 Liger Kernel</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accordion 5: 高级训练参数 (closed) -->
+      <div class="accordion" id="acc-train-advanced">
+        <div class="accordion-header">
+          <span data-i18n="sectionAdvancedTrain">高级训练参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldSeed">随机数种子</span>
+              <input type="number" id="train-seed" value="42" />
+            </label>
+            <label>
+              <span data-i18n="fieldGradAccum">梯度累积步数</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-grad-accum-slider" min="1" max="256" step="1" data-target="train-grad-accum" data-default="16" />
+                <input type="number" id="train-grad-accum" min="1" placeholder="16" />
+                <button type="button" class="reset-btn" data-target="train-grad-accum" data-default="16" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldEvalBatchSize">每卡验证 Batch Size</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-eval-batch-size-slider" min="1" max="256" step="1" data-target="train-eval-batch-size" data-default="1" />
+                <input type="number" id="train-eval-batch-size" min="1" placeholder="1" />
+                <button type="button" class="reset-btn" data-target="train-eval-batch-size" data-default="1" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldEvalSteps">验证步数</span>
+              <input type="number" id="train-eval-steps" placeholder="500" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldSaveSteps">保存步数</span>
+              <input type="number" id="train-save-steps" placeholder="500" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxSteps">最大迭代步数</span>
+              <input type="number" id="train-max-steps" placeholder="-1" />
+              <span class="hint" data-i18n="hintMaxSteps">大于 0 时忽略训练轮数</span>
+            </label>
+            <label>
+              <span data-i18n="fieldLrScheduler">LrScheduler 类型</span>
+              <input type="text" id="train-lr-scheduler" list="dl-lr-schedulers" placeholder="cosine" autocomplete="off" />
+              <datalist id="dl-lr-schedulers">
+                <option value="cosine"></option>
+                <option value="linear"></option>
+                <option value="constant"></option>
+                <option value="cosine_with_restarts"></option>
+                <option value="polynomial"></option>
+                <option value="inverse_sqrt"></option>
+              </datalist>
+            </label>
+            <label>
+              <span data-i18n="fieldWarmupRatio">学习率 Warmup 比例</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-warmup-ratio-slider" min="0" max="1" step="0.05" data-target="train-warmup-ratio" data-default="0" />
+                <input type="number" id="train-warmup-ratio" min="0" max="1" step="0.05" placeholder="0.0" />
+                <button type="button" class="reset-btn" data-target="train-warmup-ratio" data-default="0" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldWeightDecay">权重衰减</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-weight-decay-slider" min="0" max="1" step="0.01" data-target="train-weight-decay" data-default="0.1" />
+                <input type="number" id="train-weight-decay" min="0" max="1" step="0.01" placeholder="0.1" />
+                <button type="button" class="reset-btn" data-target="train-weight-decay" data-default="0.1" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldMaxGradNorm">梯度裁剪</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-max-grad-norm-slider" min="0" max="10" step="0.1" data-target="train-max-grad-norm" data-default="1" />
+                <input type="number" id="train-max-grad-norm" min="0" max="10" step="0.1" placeholder="1.0" />
+                <button type="button" class="reset-btn" data-target="train-max-grad-norm" data-default="1" title="恢复默认值">↺</button>
+              </div>
+            </label>
+            <label>
+              <span data-i18n="fieldNeftune">NEFTune 噪声系数</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="train-neftune-alpha-slider" min="0" max="20" step="0.5" data-target="train-neftune-alpha" data-default="0" />
+                <input type="number" id="train-neftune-alpha" min="0" max="20" step="0.5" placeholder="0" />
+                <button type="button" class="reset-btn" data-target="train-neftune-alpha" data-default="0" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintNeftune">通常设为 5 或 10</span>
+            </label>
+            <label>
+              <span data-i18n="fieldTruncation">数据集超长策略</span>
+              <select id="train-truncation">
+                <option value="">auto</option>
+                <option value="delete">delete</option>
+                <option value="truncation_left">truncation_left</option>
+                <option value="truncation_right">truncation_right</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingSteps">日志打印步数</span>
+              <input type="number" id="train-logging-steps" min="1" placeholder="5" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingDir">日志目录</span>
+              <input type="text" id="train-logging-dir" placeholder="auto" />
+              <span class="hint" data-i18n="hintLoggingDir">为空则自动生成</span>
+            </label>
+            <label>
+              <span data-i18n="fieldTunerBackend">Tuner Backend</span>
+              <select id="train-tuner-backend">
+                <option value="">auto</option>
+                <option value="peft">peft</option>
+                <option value="unsloth">unsloth</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accordion 6: 其他 & 上报 (closed) -->
+      <div class="accordion" id="acc-train-other">
+        <div class="accordion-header">
+          <span data-i18n="sectionOtherReport">其他 &amp; 上报</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="tab-bar" id="acc-train-other-tabs">
+            <button type="button" class="tab-btn active" data-tab="other-task" data-i18n="tabTask">任务类型</button>
+            <button type="button" class="tab-btn" data-tab="other-selfcog" data-i18n="tabSelfCog">自我认知</button>
+            <button type="button" class="tab-btn" data-tab="other-hub" data-i18n="tabHub">Hub 保存</button>
+            <button type="button" class="tab-btn" data-tab="other-report" data-i18n="tabReport">上报</button>
+            <button type="button" class="tab-btn" data-tab="other-more" data-i18n="tabMoreParams">其他参数</button>
+          </div>
+          <div class="tab-panel active" id="other-task">
+            <div class="form-grid form-grid-3">
+              <label>
+                <span data-i18n="fieldTaskType">任务类型</span>
+                <select id="train-task-type">
+                  <option value="">auto</option>
+                  <option value="causal_lm">causal_lm</option>
+                  <option value="seq_cls">seq_cls</option>
+                  <option value="embedding">embedding</option>
+                </select>
+              </label>
+            </div>
+            <div id="train-task-embed-fields" style="display:none">
+              <div class="form-grid form-grid-3">
+                <label>
+                  <span data-i18n="fieldLossType">Loss 类型</span>
+                  <select id="train-loss-type">
+                    <option value="">auto</option>
+                    <option value="cosine_similarity">cosine_similarity</option>
+                    <option value="contrastive">contrastive</option>
+                    <option value="online_contrastive">online_contrastive</option>
+                    <option value="infonce">infonce</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="train-task-seqcls-fields" style="display:none">
+              <div class="form-grid form-grid-3">
+                <label>
+                  <span data-i18n="fieldNumLabels">标签数量</span>
+                  <input type="number" id="train-num-labels" min="1" step="1" placeholder="" />
+                </label>
+                <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+                  <input type="checkbox" id="train-use-chat-template" />
+                  <span data-i18n="fieldUseChatTemplate">使用 Chat Template</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="tab-panel" id="other-selfcog">
+            <div class="form-grid form-grid-3">
+              <label>
+                <span data-i18n="fieldModelName">模型名称</span>
+                <input type="text" id="train-model-name" placeholder="e.g. 我的助手" />
+                <span class="hint" data-i18n="hintModelName">自我认知微调的模型名称</span>
+              </label>
+              <label>
+                <span data-i18n="fieldModelAuthor">模型作者</span>
+                <input type="text" id="train-model-author" placeholder="e.g. 魔搭" />
+                <span class="hint" data-i18n="hintModelAuthor">自我认知微调的模型作者</span>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="other-hub">
+            <div class="form-grid form-grid-3">
+              <label class="checkbox-label">
+                <input type="checkbox" id="train-push-to-hub" />
+                <span data-i18n="fieldPushToHub">推送到 Hub</span>
+              </label>
+              <label>
+                <span data-i18n="fieldHubModelId">Hub 模型 ID</span>
+                <input type="text" id="train-hub-model-id" placeholder="username/model-name" />
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="train-hub-private" />
+                <span data-i18n="fieldHubPrivate">私有仓库</span>
+              </label>
+              <label>
+                <span data-i18n="fieldHubStrategy">推送策略</span>
+                <select id="train-hub-strategy">
+                  <option value="">auto</option>
+                  <option value="end">end</option>
+                  <option value="checkpoint">checkpoint</option>
+                  <option value="all_checkpoints">all_checkpoints</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="fieldHubToken">Hub Token</span>
+                <input type="password" id="train-hub-token" placeholder="可选" />
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="other-report">
+            <div class="form-grid form-grid-3">
+              <label>
+                <span data-i18n="fieldReportTo">上报平台</span>
+                <select id="train-report-to">
+                  <option value="">none</option>
+                  <option value="tensorboard">tensorboard</option>
+                  <option value="wandb">wandb</option>
+                  <option value="swanlab">swanlab</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabToken">SwanLab Token</span>
+                <input type="password" id="train-swanlab-token" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabProject">SwanLab Project</span>
+                <input type="text" id="train-swanlab-project" placeholder="swift" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabWorkspace">SwanLab Workspace</span>
+                <input type="text" id="train-swanlab-workspace" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabExpName">SwanLab 实验名称</span>
+                <input type="text" id="train-swanlab-exp-name" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabMode">SwanLab Mode</span>
+                <select id="train-swanlab-mode">
+                  <option value="">auto</option>
+                  <option value="cloud">cloud</option>
+                  <option value="local">local</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-grid" style="margin-top:10px">
+              <label>
+                <span data-i18n="fieldEnvs">额外环境变量</span>
+                <input type="text" id="train-envs" placeholder="KEY1=VAL1 KEY2=VAL2" />
+                <span class="hint" data-i18n="hintEnvs">格式：KEY1=VAL1 KEY2=VAL2</span>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="other-more">
+            <div class="form-grid">
+              <label class="full-width">
+                <span data-i18n="fieldMoreParams">其他参数（JSON 或 --key value）</span>
+                <textarea id="train-more-params" rows="5" placeholder='{"weight_decay": 0.1} 或 --weight_decay 0.1'></textarea>
+                <span class="hint" data-i18n="hintMoreParams">支持 JSON 或 --key value 格式</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions" style="margin-top:16px">
+        <button class="primary"   id="train-btn-start"   data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="train-status"></span>
+      </div>
+
+      <!-- Running tasks -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="secondary" id="train-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="train-btn-kill"   data-i18n="btnKillTask">终止任务</button>
+          </div>
+        </div>
+        <select id="train-running-tasks" style="width:100%">
+          <option value="" data-i18n="noTasks">暂无运行中任务</option>
+        </select>
+        <div id="train-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="train-progress-phase">Train</span>
+              <span id="train-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="train-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="train-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="train-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="labelTrainLog">训练日志</p>
+        <textarea class="log-output" id="train-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+        <p class="train-readonly-title" style="margin:8px 0 4px" data-i18n="labelCmdPreview">运行命令</p>
+        <textarea class="cmd-preview" id="train-cmd"  readonly rows="3" style="margin-top:0"></textarea>
+      </div>
+
+      <div class="panel train-metrics-panel" id="train-metrics-panel" style="margin-top:14px;display:none">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="metricsPanelTitle">训练指标（TensorBoard）</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <a id="train-tb-url" href="#" style="display:none;font-size:13px;color:var(--brand-600);word-break:break-all" target="_blank" rel="noopener noreferrer"></a>
+            <button class="secondary" id="train-btn-tb" data-i18n="btnTensorBoardOpen">打开 TensorBoard</button>
+          </div>
+        </div>
+        <p class="metrics-hint" id="train-metrics-hint" data-i18n="metricsPanelHint" style="margin:0 0 10px;font-size:13px;color:var(--gray-700)"></p>
+        <div class="metrics-grid" id="train-metrics-grid">
+          <div class="metric-cell"><div class="metric-title" data-i18n="metricTrainLoss">train/loss</div><canvas id="train-chart-train-loss"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" data-i18n="metricTrainAcc">train/acc</div><canvas id="train-chart-train-acc"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" data-i18n="metricTrainLr">train/learning_rate</div><canvas id="train-chart-train-learning-rate"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" data-i18n="metricEvalLoss">eval/loss</div><canvas id="train-chart-eval-loss"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" data-i18n="metricEvalAcc">eval/acc</div><canvas id="train-chart-eval-acc"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: RLHF
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-rlhf">
+
+      <div class="section-label" data-i18n="tabRlhf">LLM人类对齐</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="rlhf-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+          <span class="hint" data-i18n="hintModel">本地路径或 ModelScope / HuggingFace 模型 ID</span>
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="rlhf-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="rlhf-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label class="full-width tag-input-wrap">
+          <span data-i18n="fieldDataset">数据集</span>
+          <div class="tag-box" id="rlhf-dataset-box" data-for="rlhf-dataset">
+            <input class="tag-text-input" list="dl-datasets" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+          </div>
+          <input type="hidden" id="rlhf-dataset" />
+          <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认；可添加多个</span>
+        </label>
+        <label>
+          <span data-i18n="fieldTrainRecord">训练记录</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="rlhf-record" style="flex:1">
+              <option value="" data-i18n="optNoRecord">-- 无记录 --</option>
+            </select>
+            <button type="button" class="secondary" id="rlhf-btn-clear-records" style="white-space:nowrap" data-i18n="btnClearRecords">删除记录</button>
+          </div>
+          <span class="hint" data-i18n="hintTrainRecord">选择历史训练记录可恢复参数</span>
+        </label>
+        <label>
+          <span data-i18n="fieldRlhfType">RLHF 类型</span>
+          <select id="rlhf-type">
+            <option value="dpo">dpo</option>
+            <option value="orpo">orpo</option>
+            <option value="simpo">simpo</option>
+            <option value="kto">kto</option>
+            <option value="cpo">cpo</option>
+            <option value="rm">rm</option>
+            <option value="ppo">ppo</option>
+            <option value="gkd">gkd</option>
+          </select>
+        </label>
+        <label class="full-width" style="margin-top:4px">
+          <span data-i18n="fieldSystem">System Prompt</span>
+          <textarea id="rlhf-system" rows="1" placeholder="可选"></textarea>
+        </label>
+      </div>
+
+      <div class="accordion open" id="acc-rlhf-basic">
+        <div class="accordion-header">
+          <span data-i18n="sectionBasicConfig">基础配置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldTunerType">训练方式</span>
+              <select id="rlhf-tuner-type">
+                <option value="lora">lora</option>
+                <option value="full">full</option>
+                <option value="longlora">longlora</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTorchDtype">训练精度</span>
+              <select id="rlhf-torch-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldSeed">随机数种子</span>
+              <input type="number" id="rlhf-seed" value="42" />
+            </label>
+            <label>
+              <span data-i18n="fieldLearningRate">学习率</span>
+              <input type="text" id="rlhf-lr" placeholder="e.g. 1e-5" />
+            </label>
+            <label>
+              <span data-i18n="fieldBatchSize">每卡 Batch Size</span>
+              <input type="number" id="rlhf-batch-size" placeholder="1" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldEpochs">训练轮数</span>
+              <input type="number" id="rlhf-epochs" placeholder="1" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldOutputDir">输出目录</span>
+              <input type="text" id="rlhf-output-dir" placeholder="output/" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-dataset">
+        <div class="accordion-header">
+          <span data-i18n="sectionDatasetConfig">数据集设置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldSplitRatio">验证集拆分比例</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="rlhf-split-ratio-slider" min="0" max="1" step="0.05" data-target="rlhf-split-ratio" data-default="0" />
+                <input type="number" id="rlhf-split-ratio" min="0" max="1" step="0.05" placeholder="0.0" />
+                <button type="button" class="reset-btn" data-target="rlhf-split-ratio" data-default="0" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintSplitRatio">拆分到验证集的比例，0 表示不拆分</span>
+            </label>
+            <label>
+              <span data-i18n="fieldMaxLength">句子最大长度</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="rlhf-max-length-slider" min="32" max="32768" step="1" data-target="rlhf-max-length" data-default="1024" />
+                <input type="number" id="rlhf-max-length" min="32" max="32768" placeholder="1024" />
+                <button type="button" class="reset-btn" data-target="rlhf-max-length" data-default="1024" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintMaxLength">输入模型的最大 token 长度</span>
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="rlhf-padding-free" />
+              <span data-i18n="fieldPaddingFree">无填充批处理</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-align">
+        <div class="accordion-header">
+          <span data-i18n="sectionAlignmentConfig">对齐参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldBeta">Beta 系数</span>
+              <input type="number" id="rlhf-beta" placeholder="0.1" step="0.01" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxCompletionLength">最大生成长度</span>
+              <input type="number" id="rlhf-max-completion-length" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLossScale">损失权重设置</span>
+              <input type="text" id="rlhf-loss-scale" placeholder="default" />
+            </label>
+            <label>
+              <span data-i18n="fieldRefModel">参考模型</span>
+              <input type="text" id="rlhf-ref-model" placeholder="可选" />
+            </label>
+            <label>
+              <span data-i18n="fieldRefModelType">参考模型类型</span>
+              <input type="text" id="rlhf-ref-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="fieldRewardModel">奖励模型</span>
+              <input type="text" id="rlhf-reward-model" placeholder="可选" />
+            </label>
+            <label>
+              <span data-i18n="fieldRewardModelType">奖励模型类型</span>
+              <input type="text" id="rlhf-reward-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="fieldTeacherModel">教师模型</span>
+              <input type="text" id="rlhf-teacher-model" placeholder="可选" />
+            </label>
+            <label>
+              <span data-i18n="fieldTeacherModelType">教师模型类型</span>
+              <input type="text" id="rlhf-teacher-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="fieldRpoAlpha">RPO Alpha</span>
+              <input type="number" id="rlhf-rpo-alpha" step="0.1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLambda">Lambda</span>
+              <input type="number" id="rlhf-lmbda" step="0.1" />
+            </label>
+            <label>
+              <span data-i18n="fieldSimpoGamma">SimPO Gamma</span>
+              <input type="number" id="rlhf-simpo-gamma" step="0.1" />
+            </label>
+            <label>
+              <span data-i18n="fieldCpoAlpha">CPO Alpha</span>
+              <input type="number" id="rlhf-cpo-alpha" step="0.1" />
+            </label>
+            <label>
+              <span data-i18n="fieldDesirableWeight">Desirable Weight</span>
+              <input type="number" id="rlhf-desirable-weight" step="0.1" />
+            </label>
+            <label>
+              <span data-i18n="fieldUndesirableWeight">Undesirable Weight</span>
+              <input type="number" id="rlhf-undesirable-weight" step="0.1" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-lora">
+        <div class="accordion-header">
+          <span data-i18n="sectionLoraParams">LoRA 参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldLoraRank">LoRA Rank</span>
+              <input type="number" id="rlhf-lora-rank" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraAlpha">LoRA Alpha</span>
+              <input type="number" id="rlhf-lora-alpha" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDropout">LoRA Dropout</span>
+              <input type="number" id="rlhf-lora-dropout" step="0.01" min="0" max="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDtype">LoRA Dtype</span>
+              <select id="rlhf-lora-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTargetModules">Target Modules</span>
+              <input type="text" id="rlhf-target-modules" placeholder="auto" />
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="rlhf-use-rslora" />
+              <span data-i18n="fieldUseRslora">Use RSLoRA</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="rlhf-use-dora" />
+              <span data-i18n="fieldUseDora">Use DoRA</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-hardware">
+        <div class="accordion-header">
+          <span data-i18n="sectionHardwareAccel">硬件与加速</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label class="checkbox-label">
+              <input type="checkbox" id="rlhf-use-liger" />
+              <span data-i18n="fieldUseLigerKernel">使用 Liger Kernel</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="rlhf-use-ddp" />
+              <span data-i18n="fieldUseDdp">使用 DDP</span>
+            </label>
+            <label>
+              <span data-i18n="fieldDdpNum">DDP 分片数</span>
+              <input type="number" id="rlhf-ddp-num" min="1" value="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldDeepspeed">DeepSpeed</span>
+              <select id="rlhf-deepspeed">
+                <option value="">None</option>
+                <option value="zero0">zero0</option>
+                <option value="zero1">zero1</option>
+                <option value="zero2">zero2</option>
+                <option value="zero3">zero3</option>
+                <option value="zero2_offload">zero2_offload</option>
+                <option value="zero3_offload">zero3_offload</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldSeqParallel">序列并行大小</span>
+              <input type="number" id="rlhf-seq-parallel" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldGpuIds">选择 GPU</span>
+              <select multiple id="rlhf-gpu-ids" size="3"></select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-advanced">
+        <div class="accordion-header">
+          <span data-i18n="sectionAdvancedTrain">高级训练参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldEvalBatchSize">每卡验证 Batch Size</span>
+              <input type="number" id="rlhf-eval-batch-size" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldGradAccum">梯度累积步数</span>
+              <input type="number" id="rlhf-grad-accum" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldEvalSteps">验证步数</span>
+              <input type="number" id="rlhf-eval-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldSaveSteps">保存步数</span>
+              <input type="number" id="rlhf-save-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLrScheduler">LrScheduler 类型</span>
+              <select id="rlhf-lr-scheduler">
+                <option value="">auto</option>
+                <option value="cosine">cosine</option>
+                <option value="linear">linear</option>
+                <option value="constant">constant</option>
+                <option value="constant_with_warmup">constant_with_warmup</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldWarmupRatio">学习率 Warmup 比例</span>
+              <input type="number" id="rlhf-warmup-ratio" step="0.01" min="0" max="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldWeightDecay">权重衰减</span>
+              <input type="number" id="rlhf-weight-decay" step="0.01" min="0" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxGradNorm">梯度裁剪</span>
+              <input type="number" id="rlhf-max-grad-norm" step="0.1" min="0" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxSteps">最大迭代步数</span>
+              <input type="number" id="rlhf-max-steps" min="-1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingSteps">日志打印步数</span>
+              <input type="number" id="rlhf-logging-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldAttnImpl">Flash Attention 类型</span>
+              <select id="rlhf-attn-impl">
+                <option value="">auto</option>
+                <option value="flash_attn">flash_attn</option>
+                <option value="sdpa">sdpa</option>
+                <option value="eager">eager</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTunerBackend">Tuner Backend</span>
+              <select id="rlhf-tuner-backend">
+                <option value="">auto</option>
+                <option value="peft">peft</option>
+                <option value="swift">swift</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingDir">日志目录</span>
+              <input type="text" id="rlhf-logging-dir" placeholder="output/model-xxxx" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-rlhf-other">
+        <div class="accordion-header">
+          <span data-i18n="sectionOtherReport">其他 &amp; 上报</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="tab-bar" id="acc-rlhf-other-tabs">
+            <button type="button" class="tab-btn active" data-tab="rlhf-other-general" data-i18n="tabOther">其他</button>
+            <button type="button" class="tab-btn" data-tab="rlhf-other-report" data-i18n="tabReport">上报</button>
+            <button type="button" class="tab-btn" data-tab="rlhf-other-more" data-i18n="tabMoreParams">其他参数</button>
+          </div>
+          <div class="tab-panel active" id="rlhf-other-general">
+            <div class="form-grid">
+              <label>
+                <span data-i18n="fieldEnvs">额外环境变量</span>
+                <input type="text" id="rlhf-envs" placeholder="KEY1=VAL1 KEY2=VAL2" />
+                <span class="hint" data-i18n="hintEnvs">格式：KEY1=VAL1 KEY2=VAL2</span>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="rlhf-other-report">
+            <div class="form-grid form-grid-3">
+              <label>
+                <span data-i18n="fieldReportTo">上报平台</span>
+                <select id="rlhf-report-to">
+                  <option value="">none</option>
+                  <option value="tensorboard">tensorboard</option>
+                  <option value="wandb">wandb</option>
+                  <option value="swanlab">swanlab</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabToken">SwanLab Token</span>
+                <input type="password" id="rlhf-swanlab-token" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabProject">SwanLab Project</span>
+                <input type="text" id="rlhf-swanlab-project" placeholder="swift" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabWorkspace">SwanLab Workspace</span>
+                <input type="text" id="rlhf-swanlab-workspace" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabExpName">SwanLab 实验名称</span>
+                <input type="text" id="rlhf-swanlab-exp-name" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabMode">SwanLab Mode</span>
+                <select id="rlhf-swanlab-mode">
+                  <option value="">auto</option>
+                  <option value="cloud">cloud</option>
+                  <option value="local">local</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="rlhf-other-more">
+            <div class="form-grid">
+              <label class="full-width">
+                <span data-i18n="fieldMoreParams">其他参数</span>
+                <textarea id="rlhf-more-params" rows="4" placeholder='{"beta": 0.1}'></textarea>
+                <span class="hint" data-i18n="hintMoreParams">支持 JSON 或 --key value 格式</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="primary" id="rlhf-btn-start" data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="rlhf-status"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px">
+            <button class="secondary" id="rlhf-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="rlhf-btn-kill" data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="rlhf-running-tasks" style="width:100%">
+          <option value="">暂无运行中任务</option>
+        </select>
+        <div id="rlhf-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="rlhf-progress-phase">Train</span>
+              <span id="rlhf-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="rlhf-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="rlhf-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="rlhf-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="logTitle">运行日志</p>
+        <textarea class="log-output" id="rlhf-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+        <p class="train-readonly-title" style="margin:8px 0 4px" data-i18n="labelCmdPreview">运行命令</p>
+        <textarea class="cmd-preview" id="rlhf-cmd" readonly rows="3" style="margin-top:0"></textarea>
+      </div>
+
+      <div class="panel" id="rlhf-metrics-panel" style="display:none">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="metricsPanelTitle">训练指标（TensorBoard）</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <a id="rlhf-tb-url" href="" target="_blank" rel="noopener" style="display:none;font-size:12px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></a>
+            <button class="secondary" id="rlhf-btn-tb" data-i18n="btnTensorBoardOpen">打开 TensorBoard</button>
+          </div>
+        </div>
+        <p class="metrics-hint" id="rlhf-metrics-hint" data-i18n="metricsPanelHint" style="margin:0 0 10px;font-size:13px;color:var(--gray-700)"></p>
+        <div class="metrics-grid">
+          <div class="metric-cell"><div class="metric-title" id="rlhf-chart-title-0">train/loss</div><canvas id="rlhf-chart-0"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="rlhf-chart-title-1">train/rewards/accuracies</div><canvas id="rlhf-chart-1"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="rlhf-chart-title-2">train/rewards/margins</div><canvas id="rlhf-chart-2"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="rlhf-chart-title-3">train/logps/chosen</div><canvas id="rlhf-chart-3"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="rlhf-chart-title-4">train/logps/rejected</div><canvas id="rlhf-chart-4"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: GRPO
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-grpo">
+
+      <div class="section-label" data-i18n="tabGrpo">LLM GRPO</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="grpo-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+          <span class="hint" data-i18n="hintModel">本地路径或 ModelScope / HuggingFace 模型 ID</span>
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="grpo-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="grpo-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label class="full-width tag-input-wrap">
+          <span data-i18n="fieldDataset">数据集</span>
+          <div class="tag-box" id="grpo-dataset-box" data-for="grpo-dataset">
+            <input class="tag-text-input" list="dl-datasets" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+          </div>
+          <input type="hidden" id="grpo-dataset" />
+          <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认；可添加多个</span>
+        </label>
+        <label>
+          <span data-i18n="fieldTrainRecord">训练记录</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="grpo-record" style="flex:1">
+              <option value="" data-i18n="optNoRecord">-- 无记录 --</option>
+            </select>
+            <button type="button" class="secondary" id="grpo-btn-clear-records" style="white-space:nowrap" data-i18n="btnClearRecords">删除记录</button>
+          </div>
+          <span class="hint" data-i18n="hintTrainRecord">选择历史训练记录可恢复参数</span>
+        </label>
+        <label class="full-width" style="margin-top:4px">
+          <span data-i18n="fieldSystem">System Prompt</span>
+          <textarea id="grpo-system" rows="4" placeholder="可选"></textarea>
+        </label>
+      </div>
+
+      <div class="accordion open" id="acc-grpo-basic">
+        <div class="accordion-header">
+          <span data-i18n="sectionBasicConfig">基础配置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldTunerType">训练方式</span>
+              <select id="grpo-tuner-type">
+                <option value="lora">lora</option>
+                <option value="full">full</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTorchDtype">训练精度</span>
+              <select id="grpo-torch-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldSeed">随机数种子</span>
+              <input type="number" id="grpo-seed" value="42" />
+            </label>
+            <label>
+              <span data-i18n="fieldLearningRate">学习率</span>
+              <input type="text" id="grpo-lr" placeholder="e.g. 1e-5" />
+            </label>
+            <label>
+              <span data-i18n="fieldBatchSize">每卡 Batch Size</span>
+              <input type="number" id="grpo-batch-size" placeholder="1" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldEpochs">训练轮数</span>
+              <input type="number" id="grpo-epochs" placeholder="1" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldOutputDir">输出目录</span>
+              <input type="text" id="grpo-output-dir" placeholder="output/" />
+            </label>
+            <label>
+              <span data-i18n="fieldRefModel">参考模型</span>
+              <input type="text" id="grpo-ref-model" placeholder="可选" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-dataset">
+        <div class="accordion-header">
+          <span data-i18n="sectionDatasetConfig">数据集设置</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldSplitRatio">验证集拆分比例</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="grpo-split-ratio-slider" min="0" max="1" step="0.05" data-target="grpo-split-ratio" data-default="0" />
+                <input type="number" id="grpo-split-ratio" min="0" max="1" step="0.05" placeholder="0.0" />
+                <button type="button" class="reset-btn" data-target="grpo-split-ratio" data-default="0" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintSplitRatio">拆分到验证集的比例，0 表示不拆分</span>
+            </label>
+            <label>
+              <span data-i18n="fieldMaxLength">句子最大长度</span>
+              <div class="slider-input-group">
+                <input type="range" class="range-slider" id="grpo-max-length-slider" min="32" max="32768" step="1" data-target="grpo-max-length" data-default="1024" />
+                <input type="number" id="grpo-max-length" min="32" max="32768" placeholder="1024" />
+                <button type="button" class="reset-btn" data-target="grpo-max-length" data-default="1024" title="恢复默认值">↺</button>
+              </div>
+              <span class="hint" data-i18n="hintMaxLength">输入模型的最大 token 长度</span>
+            </label>
+            <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+              <input type="checkbox" id="grpo-padding-free" />
+              <span data-i18n="fieldPaddingFree">无填充批处理</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-reward">
+        <div class="accordion-header">
+          <span data-i18n="sectionRewardConfig">奖励函数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldRewardFuncs">奖励函数</span>
+              <select multiple id="grpo-reward-funcs" size="5">
+                <option value="accuracy">accuracy</option>
+                <option value="format">format</option>
+                <option value="cosine">cosine</option>
+                <option value="repetition">repetition</option>
+                <option value="soft_overlong">soft_overlong</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldRewardWeights">奖励函数权重</span>
+              <input type="text" id="grpo-reward-weights" placeholder="1.0 1.0" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-rollout">
+        <div class="accordion-header">
+          <span data-i18n="sectionRolloutConfig">Rollout / vLLM</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldVllmMode">vLLM 模式</span>
+              <select id="grpo-vllm-mode">
+                <option value="colocate">colocate</option>
+                <option value="server">server</option>
+                <option value="not_use">not_use</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldNumGenerations">生成数量</span>
+              <input type="number" id="grpo-num-generations" placeholder="8" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxCompletionLength">最大生成长度</span>
+              <input type="number" id="grpo-max-completion-length" min="1" placeholder="512" />
+            </label>
+            <label>
+              <span data-i18n="fieldTemperature">温度</span>
+              <input type="number" id="grpo-temperature" step="0.1" placeholder="1.0" />
+            </label>
+            <label>
+              <span data-i18n="fieldTopK">Top-k</span>
+              <input type="number" id="grpo-top-k" min="1" placeholder="80" />
+            </label>
+            <label>
+              <span data-i18n="fieldTopP">Top-p</span>
+              <input type="number" id="grpo-top-p" step="0.05" min="0" max="1" placeholder="1.0" />
+            </label>
+            <label>
+              <span data-i18n="fieldRepPenalty">重复惩罚</span>
+              <input type="number" id="grpo-repetition-penalty" step="0.05" min="0" placeholder="1.05" />
+            </label>
+          </div>
+          <div id="grpo-vllm-colocate-fields">
+            <div class="form-grid form-grid-3" style="margin-top:10px">
+              <label>
+                <span data-i18n="fieldVllmGpuMemUtil">GPU 显存利用率</span>
+                <input type="text" id="grpo-vllm-gpu-memory-utilization" placeholder="0.5" />
+              </label>
+              <label>
+                <span data-i18n="fieldVllmTensorParallel">张量并行大小</span>
+                <input type="number" id="grpo-vllm-tensor-parallel-size" min="1" placeholder="1" />
+              </label>
+              <label>
+                <span data-i18n="fieldVllmMaxModelLen">模型支持的最大长度</span>
+                <input type="number" id="grpo-vllm-max-model-len" min="1" />
+              </label>
+            </div>
+          </div>
+          <div id="grpo-vllm-server-fields" style="display:none">
+            <div class="form-grid form-grid-3" style="margin-top:10px">
+              <label>
+                <span data-i18n="fieldServerHost">vLLM 服务主机</span>
+                <input type="text" id="grpo-vllm-server-host" placeholder="127.0.0.1" />
+              </label>
+              <label>
+                <span data-i18n="fieldServerPort">vLLM 服务端口</span>
+                <input type="number" id="grpo-vllm-server-port" min="1" placeholder="8000" />
+              </label>
+              <label>
+                <span data-i18n="fieldServerTimeout">服务超时时间</span>
+                <input type="number" id="grpo-vllm-server-timeout" min="1" placeholder="120" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-lora">
+        <div class="accordion-header">
+          <span data-i18n="sectionLoraParams">LoRA 参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldLoraRank">LoRA Rank</span>
+              <input type="number" id="grpo-lora-rank" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraAlpha">LoRA Alpha</span>
+              <input type="number" id="grpo-lora-alpha" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDropout">LoRA Dropout</span>
+              <input type="number" id="grpo-lora-dropout" step="0.01" min="0" max="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoraDtype">LoRA Dtype</span>
+              <select id="grpo-lora-dtype">
+                <option value="">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTargetModules">Target Modules</span>
+              <input type="text" id="grpo-target-modules" placeholder="auto" />
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="grpo-use-rslora" />
+              <span data-i18n="fieldUseRslora">Use RSLoRA</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="grpo-use-dora" />
+              <span data-i18n="fieldUseDora">Use DoRA</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-hardware">
+        <div class="accordion-header">
+          <span data-i18n="sectionHardwareAccel">硬件与加速</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label class="checkbox-label">
+              <input type="checkbox" id="grpo-use-liger" />
+              <span data-i18n="fieldUseLigerKernel">使用 Liger Kernel</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="grpo-use-ddp" />
+              <span data-i18n="fieldUseDdp">使用 DDP</span>
+            </label>
+            <label>
+              <span data-i18n="fieldDdpNum">DDP 分片数</span>
+              <input type="number" id="grpo-ddp-num" min="1" value="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldDeepspeed">DeepSpeed</span>
+              <select id="grpo-deepspeed">
+                <option value="">None</option>
+                <option value="zero0">zero0</option>
+                <option value="zero1">zero1</option>
+                <option value="zero2">zero2</option>
+                <option value="zero3">zero3</option>
+                <option value="zero2_offload">zero2_offload</option>
+                <option value="zero3_offload">zero3_offload</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldSeqParallel">序列并行大小</span>
+              <input type="number" id="grpo-seq-parallel" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldGpuIds">选择 GPU</span>
+              <select multiple id="grpo-gpu-ids" size="3"></select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-advanced">
+        <div class="accordion-header">
+          <span data-i18n="sectionAdvancedConfig">高级参数</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="form-grid form-grid-3">
+            <label>
+              <span data-i18n="fieldLossType">Loss 类型</span>
+              <select id="grpo-loss-type">
+                <option value="grpo">grpo</option>
+                <option value="bnpo">bnpo</option>
+                <option value="dr_grpo">dr_grpo</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldBeta">Beta 系数</span>
+              <input type="number" id="grpo-beta" step="0.01" placeholder="0.04" />
+            </label>
+            <label>
+              <span data-i18n="fieldEpsilon">Clip 系数</span>
+              <input type="number" id="grpo-epsilon" step="0.01" placeholder="0.2" />
+            </label>
+            <label>
+              <span data-i18n="fieldEpsilonHigh">Upper Clip 系数</span>
+              <input type="number" id="grpo-epsilon-high" step="0.01" />
+            </label>
+            <label>
+              <span data-i18n="fieldNumIterations">每个批次更新次数</span>
+              <input type="number" id="grpo-num-iterations" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldEvalBatchSize">每卡验证 Batch Size</span>
+              <input type="number" id="grpo-eval-batch-size" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldGradAccum">梯度累积步数</span>
+              <input type="number" id="grpo-grad-accum" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldEvalSteps">验证步数</span>
+              <input type="number" id="grpo-eval-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldSaveSteps">保存步数</span>
+              <input type="number" id="grpo-save-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLrScheduler">LrScheduler 类型</span>
+              <select id="grpo-lr-scheduler">
+                <option value="">auto</option>
+                <option value="cosine">cosine</option>
+                <option value="linear">linear</option>
+                <option value="constant">constant</option>
+                <option value="constant_with_warmup">constant_with_warmup</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldWarmupRatio">学习率 Warmup 比例</span>
+              <input type="number" id="grpo-warmup-ratio" step="0.01" min="0" max="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldWeightDecay">权重衰减</span>
+              <input type="number" id="grpo-weight-decay" step="0.01" min="0" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxGradNorm">梯度裁剪</span>
+              <input type="number" id="grpo-max-grad-norm" step="0.1" min="0" />
+            </label>
+            <label>
+              <span data-i18n="fieldMaxSteps">最大迭代步数</span>
+              <input type="number" id="grpo-max-steps" min="-1" />
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingSteps">日志打印步数</span>
+              <input type="number" id="grpo-logging-steps" min="1" />
+            </label>
+            <label>
+              <span data-i18n="fieldAttnImpl">Flash Attention 类型</span>
+              <select id="grpo-attn-impl">
+                <option value="">auto</option>
+                <option value="flash_attn">flash_attn</option>
+                <option value="sdpa">sdpa</option>
+                <option value="eager">eager</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldTunerBackend">Tuner Backend</span>
+              <select id="grpo-tuner-backend">
+                <option value="">auto</option>
+                <option value="peft">peft</option>
+                <option value="swift">swift</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="fieldLoggingDir">日志目录</span>
+              <input type="text" id="grpo-logging-dir" placeholder="output/model-xxxx" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="acc-grpo-other">
+        <div class="accordion-header">
+          <span data-i18n="sectionOtherReport">其他 &amp; 上报</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="tab-bar" id="acc-grpo-other-tabs">
+            <button type="button" class="tab-btn active" data-tab="grpo-other-general" data-i18n="tabOther">其他</button>
+            <button type="button" class="tab-btn" data-tab="grpo-other-report" data-i18n="tabReport">上报</button>
+            <button type="button" class="tab-btn" data-tab="grpo-other-more" data-i18n="tabMoreParams">其他参数</button>
+          </div>
+          <div class="tab-panel active" id="grpo-other-general">
+            <div class="form-grid">
+              <label>
+                <span data-i18n="fieldEnvs">额外环境变量</span>
+                <input type="text" id="grpo-envs" placeholder="KEY1=VAL1 KEY2=VAL2" />
+                <span class="hint" data-i18n="hintEnvs">格式：KEY1=VAL1 KEY2=VAL2</span>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="grpo-other-report">
+            <div class="form-grid form-grid-3">
+              <label>
+                <span data-i18n="fieldReportTo">上报平台</span>
+                <select id="grpo-report-to">
+                  <option value="">none</option>
+                  <option value="tensorboard">tensorboard</option>
+                  <option value="wandb">wandb</option>
+                  <option value="swanlab">swanlab</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabToken">SwanLab Token</span>
+                <input type="password" id="grpo-swanlab-token" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabProject">SwanLab Project</span>
+                <input type="text" id="grpo-swanlab-project" placeholder="swift" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabWorkspace">SwanLab Workspace</span>
+                <input type="text" id="grpo-swanlab-workspace" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabExpName">SwanLab 实验名称</span>
+                <input type="text" id="grpo-swanlab-exp-name" placeholder="可选" />
+              </label>
+              <label>
+                <span data-i18n="fieldSwanlabMode">SwanLab Mode</span>
+                <select id="grpo-swanlab-mode">
+                  <option value="">auto</option>
+                  <option value="cloud">cloud</option>
+                  <option value="local">local</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="tab-panel" id="grpo-other-more">
+            <div class="form-grid">
+              <label class="full-width">
+                <span data-i18n="fieldMoreParams">其他参数</span>
+                <textarea id="grpo-more-params" rows="4" placeholder='{"num_generations": 8}'></textarea>
+                <span class="hint" data-i18n="hintMoreParams">支持 JSON 或 --key value 格式</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="primary" id="grpo-btn-start" data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="grpo-status"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px">
+            <button class="secondary" id="grpo-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="grpo-btn-kill" data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="grpo-running-tasks" style="width:100%">
+          <option value="">暂无运行中任务</option>
+        </select>
+        <div id="grpo-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="grpo-progress-phase">Train</span>
+              <span id="grpo-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="grpo-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="grpo-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="grpo-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="logTitle">运行日志</p>
+        <textarea class="log-output" id="grpo-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+        <p class="train-readonly-title" style="margin:8px 0 4px" data-i18n="labelCmdPreview">运行命令</p>
+        <textarea class="cmd-preview" id="grpo-cmd" readonly rows="3" style="margin-top:0"></textarea>
+      </div>
+
+      <div class="panel" id="grpo-metrics-panel" style="display:none">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="metricsPanelTitle">训练指标（TensorBoard）</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <a id="grpo-tb-url" href="" target="_blank" rel="noopener" style="display:none;font-size:12px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></a>
+            <button class="secondary" id="grpo-btn-tb" data-i18n="btnTensorBoardOpen">打开 TensorBoard</button>
+          </div>
+        </div>
+        <p class="metrics-hint" id="grpo-metrics-hint" data-i18n="metricsPanelHint" style="margin:0 0 10px;font-size:13px;color:var(--gray-700)"></p>
+        <div class="metrics-grid">
+          <div class="metric-cell"><div class="metric-title" id="grpo-chart-title-0">train/loss</div><canvas id="grpo-chart-0"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="grpo-chart-title-1">train/reward</div><canvas id="grpo-chart-1"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="grpo-chart-title-2">train/learning_rate</div><canvas id="grpo-chart-2"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="grpo-chart-title-3">train/completions/mean_length</div><canvas id="grpo-chart-3"></canvas></div>
+          <div class="metric-cell"><div class="metric-title" id="grpo-chart-title-4">train/kl</div><canvas id="grpo-chart-4"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: Infer
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-infer">
+
+      <div class="section-label" data-i18n="tabInfer">LLM推理</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="infer-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="infer-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="infer-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldAdapters">Adapter 路径</span>
+          <input type="text" id="infer-adapters" placeholder="可选" />
+        </label>
+        <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+          <input type="checkbox" id="infer-merge-lora" />
+          <span data-i18n="fieldMergeLora">合并 LoRA</span>
+        </label>
+        <label>
+          <span data-i18n="fieldInferBackend">推理后端</span>
+          <select id="infer-backend">
+            <option value="transformers">transformers</option>
+            <option value="vllm">vllm</option>
+            <option value="sglang">sglang</option>
+            <option value="lmdeploy">lmdeploy</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldGpuIds">选择 GPU</span>
+          <select multiple id="infer-gpu-ids" size="3"></select>
+        </label>
+        <label>
+          <span data-i18n="fieldPort">服务端口</span>
+          <input type="number" id="infer-port" value="8000" min="1024" max="65535" />
+          <span class="hint" data-i18n="hintPort">推理服务监听端口，默认 8000</span>
+        </label>
+        <label>
+          <span data-i18n="fieldInferModelType">LoRA 模块名</span>
+          <input type="text" id="infer-model-type-lora" placeholder="default（可选）" />
+        </label>
+      </div>
+
+      <label style="margin-top:12px">
+        <span data-i18n="fieldMoreParams">其他参数</span>
+        <textarea id="infer-more-params" rows="3" placeholder='{"infer_backend": "vllm"}'></textarea>
+      </label>
+
+      <div class="actions" style="margin-top:14px">
+        <button class="primary"    id="infer-btn-deploy"  data-i18n="btnDeploy">🚀 部署模型</button>
+        <span class="status-text"  id="infer-status"></span>
+      </div>
+
+      <!-- Running tasks (infer) -->
+      <div class="panel" style="margin-top:10px">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中部署</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="secondary"  id="infer-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="infer-btn-kill"    data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="infer-running-tasks" style="width:100%">
+          <option value="" data-i18n="noTasks">暂无运行中任务</option>
+        </select>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Deploy log -->
+      <div class="accordion" id="acc-infer-log">
+        <div class="accordion-header">
+          <span data-i18n="logTitle">部署日志</span>
+          <span class="accordion-arrow">▶</span>
+        </div>
+        <div class="accordion-body">
+          <textarea class="log-output" id="infer-log" readonly rows="8"></textarea>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Chat -->
+      <div class="section-label" data-i18n="sectionChat">对话</div>
+      <div class="form-grid form-grid-3" style="margin-bottom:10px">
+        <label>
+          <span data-i18n="fieldSystem">System Prompt</span>
+          <textarea id="infer-system" rows="2" placeholder="可选"></textarea>
+        </label>
+        <label>
+          <span data-i18n="fieldMaxNewTokens">最大生成长度</span>
+          <input type="number" id="infer-max-tokens" value="2048" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemperature">温度</span>
+          <input type="number" id="infer-temperature" value="0.3" min="0" max="2" step="0.05" />
+        </label>
+        <label>
+          <span data-i18n="fieldTopP">Top-p</span>
+          <input type="number" id="infer-top-p" value="0.7" min="0" max="1" step="0.05" />
+        </label>
+        <label>
+          <span data-i18n="fieldTopK">Top-k</span>
+          <input type="number" id="infer-top-k" value="20" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldRepPenalty">重复惩罚</span>
+          <input type="number" id="infer-rep-penalty" value="1.05" min="1" step="0.05" />
+        </label>
+      </div>
+
+      <div class="chat-container">
+        <div class="chatbot" id="infer-chatbot">
+          <div class="muted" style="text-align:center;padding:20px" data-i18n="chatEmpty">对话为空，请先发送消息</div>
+        </div>
+
+        <!-- Multimodal tabs -->
+        <div>
+          <div class="media-tabs">
+            <button class="media-tab active" data-media="none" data-i18n="mediaTabText">Text</button>
+            <button class="media-tab"        data-media="image" data-i18n="mediaTabImage">Image</button>
+            <button class="media-tab"        data-media="video" data-i18n="mediaTabVideo">Video</button>
+            <button class="media-tab"        data-media="audio" data-i18n="mediaTabAudio">Audio</button>
+          </div>
+          <div class="media-panel active" id="media-none"></div>
+
+          <!-- Image upload -->
+          <div class="media-panel" id="media-image">
+            <div class="media-upload" data-input="infer-image" data-type="image">
+              <input type="file" id="infer-image" accept="image/*" hidden />
+              <div class="media-upload-prompt">
+                <span class="media-upload-icon">🖼</span>
+                <span data-i18n="uploadImage">点击或拖拽上传图片</span>
+              </div>
+              <div class="media-preview" style="display:none">
+                <img class="media-preview-img" alt="" />
+                <button type="button" class="media-clear">×</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Video upload -->
+          <div class="media-panel" id="media-video">
+            <div class="media-upload" data-input="infer-video" data-type="video">
+              <input type="file" id="infer-video" accept="video/*" hidden />
+              <div class="media-upload-prompt">
+                <span class="media-upload-icon">🎬</span>
+                <span data-i18n="uploadVideo">点击或拖拽上传视频</span>
+              </div>
+              <div class="media-preview" style="display:none">
+                <video class="media-preview-vid" controls></video>
+                <button type="button" class="media-clear">×</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Audio upload -->
+          <div class="media-panel" id="media-audio">
+            <div class="media-upload" data-input="infer-audio" data-type="audio">
+              <input type="file" id="infer-audio" accept="audio/*" hidden />
+              <div class="media-upload-prompt">
+                <span class="media-upload-icon">🎵</span>
+                <span data-i18n="uploadAudio">点击或拖拽上传音频</span>
+              </div>
+              <div class="media-preview" style="display:none">
+                <audio class="media-preview-aud" controls></audio>
+                <button type="button" class="media-clear">×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-input-row">
+          <textarea id="infer-prompt" rows="3" placeholder="请输入消息（Enter 发送，Shift+Enter 换行）..." data-i18n-attr="placeholder" data-i18n="chatPlaceholder"></textarea>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="primary"    id="infer-btn-send"  data-i18n="btnSend">🚀 发送</button>
+            <button class="secondary"  id="infer-btn-clear" data-i18n="btnClearHistory">清除对话</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: Export
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-export">
+
+      <div class="section-label" data-i18n="tabExport">LLM导出</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="export-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="export-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="export-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+          <input type="checkbox" id="export-merge-lora" />
+          <span data-i18n="fieldMergeLora">合并 LoRA</span>
+        </label>
+        <label>
+          <span data-i18n="fieldOutputDir">输出目录</span>
+          <input type="text" id="export-output-dir" placeholder="export_output/" />
+        </label>
+        <label>
+          <span data-i18n="fieldQuantBits">量化位数</span>
+          <select id="export-quant-bits">
+            <option value="">None</option>
+            <option value="4">4</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldQuantMethod">量化方法</span>
+          <select id="export-quant-method">
+            <option value="">None</option>
+            <option value="bnb">bnb</option>
+            <option value="gptq">gptq</option>
+            <option value="awq">awq</option>
+            <option value="aqlm">aqlm</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldQuantNSamples">量化样本数</span>
+          <input type="number" id="export-quant-n-samples" placeholder="256" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldMaxLength">最大长度</span>
+          <input type="number" id="export-max-length" placeholder="2048" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldGpuIds">选择 GPU</span>
+          <select multiple id="export-gpu-ids" size="3"></select>
+        </label>
+        <label>
+          <span data-i18n="fieldDeviceMap">Device Map</span>
+          <input type="text" id="export-device-map" placeholder="auto（可选）" />
+        </label>
+      </div>
+
+      <label class="full-width tag-input-wrap" style="margin-top:12px">
+        <span data-i18n="fieldDataset">数据集（量化校准）</span>
+        <div class="tag-box" id="export-dataset-box" data-for="export-dataset">
+          <input class="tag-text-input" list="dl-datasets" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+        </div>
+        <input type="hidden" id="export-dataset" />
+        <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认</span>
+      </label>
+
+      <label style="margin-top:12px">
+        <span data-i18n="fieldMoreParams">其他参数</span>
+        <textarea id="export-more-params" rows="3" placeholder='{"merge_lora": true}'></textarea>
+      </label>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="primary"   id="export-btn-start"   data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="export-status"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="secondary"  id="export-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="export-btn-kill"    data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="export-running-tasks" style="width:100%">
+          <option value="" data-i18n="noTasks">暂无运行中任务</option>
+        </select>
+        <div id="export-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="export-progress-phase">Export</span>
+              <span id="export-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="export-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="export-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="export-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="logTitle">运行日志</p>
+        <textarea class="log-output" id="export-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: Eval
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-eval">
+
+      <div class="section-label" data-i18n="tabEval">LLM评测</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="eval-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="eval-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="eval-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldEvalBackend">评测后端</span>
+          <select id="eval-backend">
+            <option value="">auto</option>
+            <option value="Native">Native</option>
+            <option value="OpenCompass">OpenCompass</option>
+            <option value="VLMEvalKit">VLMEvalKit</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldEvalDataset">评测数据集</span>
+          <div class="tag-box" id="eval-dataset-box" data-for="eval-dataset">
+            <input class="tag-text-input" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+          </div>
+          <input type="hidden" id="eval-dataset" />
+          <span class="tag-hint" data-i18n="datasetHint">输入数据集名称，按 Enter 确认</span>
+        </label>
+        <label>
+          <span data-i18n="fieldEvalLimit">评测样本数限制</span>
+          <input type="number" id="eval-limit" placeholder="不限" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldInferBackend">推理后端</span>
+          <select id="eval-infer-backend">
+            <option value="">auto</option>
+            <option value="transformers">transformers</option>
+            <option value="vllm">vllm</option>
+            <option value="sglang">sglang</option>
+            <option value="lmdeploy">lmdeploy</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldEvalOutputDir">评测输出目录</span>
+          <input type="text" id="eval-output-dir" placeholder="eval_output/" />
+        </label>
+        <label>
+          <span data-i18n="fieldCustomEvalConfig">自定义评测配置</span>
+          <input type="text" id="eval-custom-config" placeholder="可选路径" />
+        </label>
+        <label>
+          <span data-i18n="fieldEvalUrl">评测 API URL</span>
+          <input type="text" id="eval-url" placeholder="可选" />
+        </label>
+        <label>
+          <span data-i18n="fieldApiKey">API Key</span>
+          <input type="text" id="eval-api-key" placeholder="可选" />
+        </label>
+        <label>
+          <span data-i18n="fieldGpuIds">选择 GPU</span>
+          <select multiple id="eval-gpu-ids" size="3"></select>
+        </label>
+      </div>
+
+      <label style="margin-top:12px">
+        <span data-i18n="fieldMoreParams">其他参数</span>
+        <textarea id="eval-more-params" rows="3" placeholder='{"eval_limit": 100}'></textarea>
+      </label>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="primary"   id="eval-btn-start"   data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="eval-status"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="secondary"  id="eval-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="eval-btn-kill"    data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="eval-running-tasks" style="width:100%">
+          <option value="" data-i18n="noTasks">暂无运行中任务</option>
+        </select>
+        <div id="eval-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="eval-progress-phase">Eval</span>
+              <span id="eval-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="eval-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="eval-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="eval-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="logTitle">运行日志</p>
+        <textarea class="log-output" id="eval-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB: Sample
+    ═══════════════════════════════════════════════════════════ -->
+    <div class="section" id="section-sample">
+
+      <div class="section-label" data-i18n="tabSample">LLM采样</div>
+
+      <div class="form-grid">
+        <label class="full-width">
+          <span data-i18n="fieldModel">模型路径/ID</span>
+          <input type="text" id="sample-model" list="dl-models" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldModelType">模型类型</span>
+          <input type="text" id="sample-model-type" list="dl-model-types" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemplate">对话模板</span>
+          <input type="text" id="sample-template" list="dl-templates" placeholder="auto" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldSystem">System Prompt</span>
+          <textarea id="sample-system" rows="2" placeholder="可选"></textarea>
+        </label>
+        <label class="full-width tag-input-wrap">
+          <span data-i18n="fieldDataset">数据集</span>
+          <div class="tag-box" id="sample-dataset-box" data-for="sample-dataset">
+            <input class="tag-text-input" list="dl-datasets" placeholder="输入后按 Enter 添加，支持多选" data-i18n="datasetPlaceholder" data-i18n-attr="placeholder" autocomplete="off" />
+          </div>
+          <input type="hidden" id="sample-dataset" />
+          <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认</span>
+        </label>
+        <label>
+          <span data-i18n="fieldSamplerType">采样器类型</span>
+          <select id="sample-sampler-type">
+            <option value="">auto</option>
+            <option value="sample">sample</option>
+            <option value="mcts">mcts</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldSamplerEngine">采样引擎</span>
+          <select id="sample-sampler-engine">
+            <option value="">auto</option>
+            <option value="pt">pt</option>
+            <option value="vllm">vllm</option>
+            <option value="lmdeploy">lmdeploy</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="fieldNumReturnSeq">每条返回数量</span>
+          <input type="number" id="sample-num-return-seq" placeholder="1" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldNBestToKeep">保留最优数量</span>
+          <input type="number" id="sample-n-best" placeholder="可选" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldSamplingBatchSize">采样 Batch Size</span>
+          <input type="number" id="sample-batch-size" placeholder="8" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldSamplingBatches">采样 Batch 数</span>
+          <input type="number" id="sample-batches" placeholder="1" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldMaxNewTokens">最大新 Token 数</span>
+          <input type="number" id="sample-max-tokens" placeholder="2048" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldTemperature">温度</span>
+          <input type="number" id="sample-temperature" placeholder="可选" min="0" max="2" step="0.05" />
+        </label>
+        <label>
+          <span data-i18n="fieldTopK">Top-k</span>
+          <input type="number" id="sample-top-k" placeholder="可选" min="1" />
+        </label>
+        <label>
+          <span data-i18n="fieldTopP">Top-p</span>
+          <input type="number" id="sample-top-p" placeholder="可选" min="0" max="1" step="0.05" />
+        </label>
+        <label>
+          <span data-i18n="fieldRepPenalty">重复惩罚</span>
+          <input type="number" id="sample-rep-penalty" placeholder="可选" min="1" step="0.05" />
+        </label>
+        <label>
+          <span data-i18n="fieldPrmModel">过程奖励模型 (PRM)</span>
+          <input type="text" id="sample-prm-model" placeholder="可选" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldOrmModel">结果奖励模型 (ORM)</span>
+          <input type="text" id="sample-orm-model" placeholder="可选" autocomplete="off" />
+        </label>
+        <label>
+          <span data-i18n="fieldOutputDir">输出目录</span>
+          <input type="text" id="sample-output-dir" value="sample_output" />
+        </label>
+        <label>
+          <span data-i18n="fieldGpuIds">选择 GPU</span>
+          <select multiple id="sample-gpu-ids" size="3"></select>
+        </label>
+      </div>
+
+      <label style="margin-top:12px">
+        <span data-i18n="fieldMoreParams">其他参数</span>
+        <textarea id="sample-more-params" rows="3" placeholder='{"num_return_sequences": 4}'></textarea>
+      </label>
+
+      <div class="actions" style="margin-top:16px">
+        <button class="primary"   id="sample-btn-start"   data-i18n="btnStart">🚀 开始</button>
+        <span class="status-text" id="sample-status"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="runningTasksLabel">运行中任务</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="secondary"  id="sample-btn-refresh" data-i18n="btnRefreshTasks" disabled>刷新任务</button>
+            <button class="danger-btn" id="sample-btn-kill"    data-i18n="btnKillTask" disabled>终止任务</button>
+          </div>
+        </div>
+        <select id="sample-running-tasks" style="width:100%">
+          <option value="" data-i18n="noTasks">暂无运行中任务</option>
+        </select>
+        <div id="sample-progress" style="display:none">
+          <div class="progress-header">
+            <span>
+              <span id="sample-progress-phase">Sample</span>
+              <span id="sample-progress-steps" class="progress-steps"></span>
+            </span>
+            <span id="sample-progress-pct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="sample-progress-fill" style="width:0%"></div>
+          </div>
+          <div id="sample-progress-time" class="progress-time"></div>
+        </div>
+        <p class="train-readonly-title" style="margin:10px 0 4px" data-i18n="logTitle">运行日志</p>
+        <textarea class="log-output" id="sample-log" readonly rows="8" style="margin-top:0;display:none"></textarea>
+      </div>
+    </div>
+
+  </div><!-- /card -->
+</div><!-- /layout -->
+
+<!-- Shared datalists populated by app.js on load -->
+<datalist id="dl-models"></datalist>
+<datalist id="dl-model-types"></datalist>
+<datalist id="dl-templates"></datalist>
+<datalist id="dl-datasets"></datalist>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="./app.js"></script>
+<div id="toast-container"></div>
+</body>
+</html>

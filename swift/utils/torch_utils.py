@@ -133,13 +133,33 @@ def set_device(local_rank: Optional[Union[str, int]] = None):
         torch.cuda.set_device(local_rank)
 
 
+def is_torch_mlu_available() -> bool:
+    try:
+        import torch_mlu  # noqa: F401
+    except ImportError:
+        return False
+    return getattr(torch, 'mlu', None) is not None and torch.mlu.is_available()
+
+
 def get_device_count() -> int:
     if is_torch_npu_available():
         return torch.npu.device_count()
     elif is_torch_cuda_available():
         return torch.cuda.device_count()
+    elif is_torch_mlu_available():
+        return torch.mlu.device_count()
     else:
         return 0
+
+
+def get_ui_device_info():
+    device_count = get_device_count()
+    if device_count > 0:
+        return [str(i) for i in range(device_count)] + ['cpu'], '0'
+    elif is_torch_mps_available():
+        return ['mps', 'cpu'], 'mps'
+    else:
+        return ['cpu'], 'cpu'
 
 
 def empty_cache():

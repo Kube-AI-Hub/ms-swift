@@ -10,11 +10,12 @@ from datetime import datetime
 from functools import partial
 from json import JSONDecodeError
 from transformers.utils import is_torch_cuda_available, is_torch_npu_available
+from swift.utils import is_torch_mlu_available
 from typing import List, Type
 
 from swift.arguments import DeployArguments, InferArguments
 from swift.infer_engine import InferClient, InferRequest, RequestConfig
-from swift.utils import get_device_count, get_logger
+from swift.utils import get_ui_device_info, get_logger
 from ..base import BaseUI
 from ..llm_train import run_command_in_background_with_popen
 from .model import Model
@@ -110,7 +111,7 @@ class LLMInfer(BaseUI):
                 'en': 'Choose GPU'
             },
             'info': {
-                'zh': '选择训练使用的GPU号，如CUDA不可用只能选择CPU',
+                'zh': '选择训练使用的GPU号，如CUDA/MLU/MPS不可用只能选择CPU',
                 'en': 'Select GPU to train'
             }
         },
@@ -123,10 +124,7 @@ class LLMInfer(BaseUI):
     @classmethod
     def do_build_ui(cls, base_tab: Type['BaseUI']):
         with gr.TabItem(elem_id='llm_infer', label=''):
-            default_device = 'cpu'
-            device_count = get_device_count()
-            if device_count > 0:
-                default_device = '0'
+            device_choices, default_device = get_ui_device_info()
             with gr.Blocks():
                 infer_request = gr.State(None)
                 Model.build_ui(base_tab)
@@ -135,7 +133,7 @@ class LLMInfer(BaseUI):
                     gr.Dropdown(
                         elem_id='gpu_id',
                         multiselect=True,
-                        choices=[str(i) for i in range(device_count)] + ['cpu'],
+                        choices=device_choices,
                         value=default_device,
                         scale=8)
                     infer_model_type = gr.Textbox(elem_id='infer_model_type', scale=4)
@@ -268,6 +266,9 @@ class LLMInfer(BaseUI):
             elif is_torch_cuda_available():
                 cuda_param = f'CUDA_VISIBLE_DEVICES={gpus}'
                 all_envs['CUDA_VISIBLE_DEVICES'] = gpus
+            elif is_torch_mlu_available():
+                cuda_param = f'MLU_VISIBLE_DEVICES={gpus}'
+                all_envs['MLU_VISIBLE_DEVICES'] = gpus
             else:
                 cuda_param = ''
         now = datetime.now()
