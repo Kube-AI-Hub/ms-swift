@@ -96,8 +96,31 @@ def safe_snapshot_download(model_id_or_path: str,
         model_id_or_path, sub_folder = model_id_or_path
         if sub_folder is not None:
             kwargs['allow_patterns'] = [f"{sub_folder.rstrip('/')}/*"]
+
+        _token = os.getenv('HF_TOKEN') or os.getenv('ACCESS_TOKEN', '')
+        _endpoint = os.getenv('HF_ENDPOINT', 'https://hf-mirror.com')
+        _download_dir = os.getenv('HUGGINGFACE_HUB_CACHE', './download')
+        _effective_token = _token or hub_token
+
         with safe_ddp_context(hash_id=model_id_or_path):
-            model_dir = hub.download_model(model_id_or_path, revision, ignore_patterns, token=hub_token, **kwargs)
+            if _endpoint != 'https://hf-mirror.com':
+                try:
+                    from pycsghub.snapshot_download import hub_snapshot_download
+                    model_dir = hub_snapshot_download(
+                        model_id_or_path,
+                        cache_dir=_download_dir,
+                        endpoint=_endpoint,
+                        token=_effective_token,
+                    )
+                except Exception as e:
+                    logger.warning(f'pycsghub download failed: {e}, falling back to modelscope/huggingface')
+                    model_dir = hub.download_model(
+                        model_id_or_path, revision, ignore_patterns,
+                        token=_effective_token, cache_dir=_download_dir, **kwargs)
+            else:
+                model_dir = hub.download_model(
+                    model_id_or_path, revision, ignore_patterns,
+                    token=_effective_token, cache_dir=_download_dir, **kwargs)
 
         logger.info(f'Loading the model using model_dir: {model_dir}')
 
