@@ -10,7 +10,7 @@ import tempfile
 import threading
 import torch
 from dataclasses import asdict, dataclass, field
-from modelscope import snapshot_download
+from swift.utils import safe_snapshot_download
 from modelscope.hub.utils.utils import get_cache_dir
 from packaging import version
 from peft.utils import CONFIG_NAME
@@ -76,7 +76,7 @@ class SwiftConfig:
             config_file = os.path.join(pretrained_model_name_or_path, CONFIG_NAME)
         else:
             try:
-                model_dir = snapshot_download(pretrained_model_name_or_path, ignore_patterns=BIN_EXTENSIONS)
+                model_dir = safe_snapshot_download(pretrained_model_name_or_path, ignore_patterns=BIN_EXTENSIONS)
                 config_file = os.path.join(model_dir, CONFIG_NAME)
             except Exception:
                 raise ValueError(f"Can't find config.json at '{pretrained_model_name_or_path}'")

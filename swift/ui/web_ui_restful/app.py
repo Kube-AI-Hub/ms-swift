@@ -1583,11 +1583,17 @@ def webui_restful_main(args=None):
             thread_pool_workers = int(tp_env)
     effective_threads = (thread_pool_workers if thread_pool_workers is not None
                          else _default_thread_pool_workers())
-    logger.info(
-        f'Starting SWIFT Web-UI Restful on http://{server}:{port} (thread_pool_workers={effective_threads})')
     application = create_app(
         thread_pool_workers=thread_pool_workers,
         tensorboard_path_prefix=getattr(args, 'tensorboard_path_prefix', None),
         tensorboard_public_base_url=getattr(args, 'tensorboard_public_base_url', None),
     )
+    context_path = os.environ.get('CONTEXT_PATH', '/').rstrip('/')
+    if context_path:
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+        application = Starlette(routes=[Mount(context_path, app=application)])
+    logger.info(
+        f'Starting SWIFT Web-UI Restful on http://{server}:{port}{context_path or "/"} '
+        f'(thread_pool_workers={effective_threads})')
     uvicorn.run(application, host=server, port=port)
