@@ -977,16 +977,17 @@ def create_app(
         return await asyncio.to_thread(tensorboard_status)
 
     @app.post('/api/v1/tensorboard/start')
-    async def tensorboard_start_api(req: TensorBoardStartRequest):
+    async def tensorboard_start_api(req: TensorBoardStartRequest, request: Request):
         def _run():
             return start_tensorboard(req.logging_dir, tb_prefix)
 
         ok, msg, port, url_suffix = await asyncio.to_thread(_run)
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
-        open_url = url_suffix
+        base = str(request.base_url).rstrip('/')
+        open_url = base + (url_suffix or '/')
         if tb_public_base:
-            open_url = tb_public_base.rstrip('/') + (url_suffix or '')
+            open_url = tb_public_base.rstrip('/') + (url_suffix or '/')
         return {
             'status': 'ok',
             'message': msg,
