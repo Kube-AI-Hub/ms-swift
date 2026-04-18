@@ -63,7 +63,6 @@ def safe_snapshot_download(model_id_or_path: str,
         >>> # Download config only (no weights)
         >>> model_dir = safe_snapshot_download('Qwen/Qwen2.5-7B-Instruct', download_model=False)
     """
-    from swift.hub import get_hub
     if check_local:
         model_suffix = model_id_or_path.rsplit('/', 1)[-1]
         if os.path.exists(model_suffix):
@@ -77,7 +76,6 @@ def safe_snapshot_download(model_id_or_path: str,
         ]
     if not download_model:
         ignore_patterns += ['*.bin', '*.safetensors']
-    hub = get_hub(use_hf)
     if model_id_or_path.startswith('~'):
         model_id_or_path = os.path.abspath(os.path.expanduser(model_id_or_path))
     model_path_to_check = '/'.join(model_id_or_path.split(':', 1))
@@ -103,24 +101,48 @@ def safe_snapshot_download(model_id_or_path: str,
         _effective_token = _token or hub_token
 
         with safe_ddp_context(hash_id=model_id_or_path):
-            if _endpoint != 'https://hf-mirror.com':
+            from swift.hub.hub import MSHub, HFHub
+            model_dir = None
+            last_exc = None
+
+            try:
+                from pycsghub.snapshot_download import snapshot_download as _csg_download
+                model_dir = _csg_download(
+                    model_id_or_path,
+                    cache_dir=_download_dir,
+                    endpoint=_endpoint,
+                    token=_effective_token,
+                )
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'pycsghub download failed: {e}, falling back to MSHub')
+
+            if model_dir is None:
                 try:
-                    from pycsghub.snapshot_download import snapshot_download as _csg_download
-                    model_dir = _csg_download(
-                        model_id_or_path,
-                        cache_dir=_download_dir,
-                        endpoint=_endpoint,
-                        token=_effective_token,
-                    )
-                except Exception as e:
-                    logger.warning(f'pycsghub download failed: {e}, falling back to modelscope/huggingface')
-                    model_dir = hub.download_model(
+                    model_dir = MSHub.download_model(
                         model_id_or_path, revision, ignore_patterns,
                         token=_effective_token, cache_dir=_download_dir, **kwargs)
-            else:
-                model_dir = hub.download_model(
-                    model_id_or_path, revision, ignore_patterns,
-                    token=_effective_token, cache_dir=_download_dir, **kwargs)
+                except Exception as e:
+                    last_exc = e
+                    logger.warning(f'MSHub download failed: {e}, falling back to HFHub (hf-mirror.com)')
+
+            if model_dir is None:
+                _orig_endpoint = os.environ.get('HF_ENDPOINT')
+                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+                try:
+                    model_dir = HFHub.download_model(
+                        model_id_or_path, revision, ignore_patterns,
+                        token=_effective_token, cache_dir=_download_dir,
+                        endpoint='https://hf-mirror.com', **kwargs)
+                except Exception as e:
+                    raise RuntimeError(
+                        f'All download attempts failed (pycsghub, MSHub, HFHub). Last error: {e}'
+                    ) from last_exc
+                finally:
+                    if _orig_endpoint is None:
+                        os.environ.pop('HF_ENDPOINT', None)
+                    else:
+                        os.environ['HF_ENDPOINT'] = _orig_endpoint
 
         logger.info(f'Loading the model using model_dir: {model_dir}')
 
