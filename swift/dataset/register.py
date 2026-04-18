@@ -4,7 +4,7 @@ import os
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Union
 
-from swift.utils import get_logger, use_hf_hub
+from swift.utils import get_logger
 from .dataset_meta import DATASET_MAPPING, DatasetMeta, SubsetDataset
 from .preprocessor import AutoPreprocessor, MessagesPreprocessor
 
@@ -12,14 +12,18 @@ logger = get_logger()
 
 
 def get_dataset_list():
+    """Return a deduplicated list of registered dataset ids across all backends.
+
+    Read operations now follow the cascade CSGHub -> MSHub -> HFHub(hf-mirror) instead
+    of being filtered by `USE_HF`, so we surface ids from both registries.
+    """
+    seen = set()
     datasets = []
     for key in DATASET_MAPPING:
-        if use_hf_hub():
-            if key[1]:
-                datasets.append(key[1])
-        else:
-            if key[0]:
-                datasets.append(key[0])
+        for did in (key[0], key[1]):
+            if did and did not in seen:
+                seen.add(did)
+                datasets.append(did)
     return datasets
 
 

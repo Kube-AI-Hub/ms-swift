@@ -10,7 +10,6 @@ from peft import PeftModel
 from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForSequenceClassification,
                           AutoTokenizer, GenerationConfig, PretrainedConfig, PreTrainedModel, PreTrainedTokenizerBase)
 from transformers.integrations import is_deepspeed_zero3_enabled
-from transformers.utils import strtobool
 from types import MethodType
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
@@ -141,19 +140,23 @@ def fix_do_sample_warning(generation_config: GenerationConfig) -> None:
 
 
 def get_model_list() -> List[str]:
-    use_hf = strtobool(os.environ.get('USE_HF', 'False'))
+    """Return a deduplicated list of registered model ids across all backends.
+
+    Read operations now follow the cascade CSGHub -> MSHub -> HFHub(hf-mirror) instead
+    of being filtered by `USE_HF`, so we surface ids from both registries.
+    """
+    seen = set()
     models = []
     for model_type in ModelType.get_model_name_list():
         model_meta = MODEL_MAPPING.get(model_type)
-        if model_meta:
-            for group in model_meta.model_groups:
-                for model in group.models:
-                    if use_hf:
-                        if model.hf_model_id:
-                            models.append(model.hf_model_id)
-                    else:
-                        if model.ms_model_id:
-                            models.append(model.ms_model_id)
+        if not model_meta:
+            continue
+        for group in model_meta.model_groups:
+            for model in group.models:
+                for mid in (model.hf_model_id, model.ms_model_id):
+                    if mid and mid not in seen:
+                        seen.add(mid)
+                        models.append(mid)
     return models
 
 

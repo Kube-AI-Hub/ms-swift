@@ -37,9 +37,9 @@ def safe_snapshot_download(model_id_or_path: str,
         download_model (bool, optional): Whether to download model weight files
             (.bin, .safetensors). If False, only config and tokenizer files are
             downloaded. Defaults to True.
-        use_hf (Optional[bool], optional): Force using HuggingFace Hub (True) or ModelScope (False).
-            If None, it is controlled by the environment variable `USE_HF`, which defaults to '0'.
-            Default: None.
+        use_hf (Optional[bool], optional): Kept for backward compatibility. Ignored by the
+            current implementation: model download always follows the cascade
+            CSGHub -> MSHub -> HFHub(hf-mirror) regardless of `USE_HF`. Default: None.
         hub_token (Optional[str], optional): Authentication token for accessing private
             or gated models. Defaults to None.
         ignore_patterns (Optional[List[str]], optional): List of glob patterns for files
@@ -96,53 +96,18 @@ def safe_snapshot_download(model_id_or_path: str,
             kwargs['allow_patterns'] = [f"{sub_folder.rstrip('/')}/*"]
 
         _token = os.getenv('HF_TOKEN') or os.getenv('ACCESS_TOKEN', '')
-        _endpoint = os.getenv('HF_ENDPOINT', 'https://hf-mirror.com')
         _download_dir = os.getenv('HUGGINGFACE_HUB_CACHE', './download')
         _effective_token = _token or hub_token
 
         with safe_ddp_context(hash_id=model_id_or_path):
-            from swift.hub.hub import MSHub, HFHub
-            model_dir = None
-            last_exc = None
-
-            try:
-                from pycsghub.snapshot_download import snapshot_download as _csg_download
-                model_dir = _csg_download(
-                    model_id_or_path,
-                    cache_dir=_download_dir,
-                    endpoint=_endpoint,
-                    token=_effective_token,
-                )
-            except Exception as e:
-                last_exc = e
-                logger.warning(f'pycsghub download failed: {e}, falling back to MSHub')
-
-            if model_dir is None:
-                try:
-                    model_dir = MSHub.download_model(
-                        model_id_or_path, revision, ignore_patterns,
-                        token=_effective_token, cache_dir=_download_dir, **kwargs)
-                except Exception as e:
-                    last_exc = e
-                    logger.warning(f'MSHub download failed: {e}, falling back to HFHub (hf-mirror.com)')
-
-            if model_dir is None:
-                _orig_endpoint = os.environ.get('HF_ENDPOINT')
-                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-                try:
-                    model_dir = HFHub.download_model(
-                        model_id_or_path, revision, ignore_patterns,
-                        token=_effective_token, cache_dir=_download_dir,
-                        endpoint='https://hf-mirror.com', **kwargs)
-                except Exception as e:
-                    raise RuntimeError(
-                        f'All download attempts failed (pycsghub, MSHub, HFHub). Last error: {e}'
-                    ) from last_exc
-                finally:
-                    if _orig_endpoint is None:
-                        os.environ.pop('HF_ENDPOINT', None)
-                    else:
-                        os.environ['HF_ENDPOINT'] = _orig_endpoint
+            from swift.hub.hub import cascading_download_model
+            model_dir = cascading_download_model(
+                model_id_or_path,
+                revision=revision,
+                ignore_patterns=ignore_patterns,
+                token=_effective_token,
+                cache_dir=_download_dir,
+                **kwargs)
 
         logger.info(f'Loading the model using model_dir: {model_dir}')
 

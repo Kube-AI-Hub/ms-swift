@@ -7,7 +7,7 @@ from packaging import version
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import swift
-from swift.hub import get_hub
+from swift.hub import get_write_hub
 from swift.model import get_ckpt_dir, get_model_processor, load_by_unsloth
 from swift.ray import RayArguments
 from swift.template import Template, get_template
@@ -149,6 +149,10 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
 
     def __post_init__(self):
         self.swift_version = swift.__version__
+        # `use_hf` only affects legacy code paths (e.g. MLLM auxiliary downloads);
+        # model download, dataset loading and write-side hub selection no longer derive
+        # their backend from `USE_HF`. Reads cascade CSGHub -> MSHub -> HFHub(hf-mirror)
+        # and writes always go to CSGHub.
         if self.use_hf or use_hf_hub():
             self.use_hf = True
             os.environ['USE_HF'] = '1'
@@ -175,7 +179,8 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
         if self.packing and self.packing_length is None:
             self.packing_length = self.max_length
         self._init_lazy_tokenize()
-        self.hub = get_hub(self.use_hf)
+        # Write operations (push_to_hub, create_model_repo, login) always target CSGHub.
+        self.hub = get_write_hub()
         if self.hub.try_login(self.hub_token):
             logger.info('hub login successful!')
 
