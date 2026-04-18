@@ -504,6 +504,10 @@ class CSGHub(HubOperation):
         token = cls._resolve_token(token)
         if cache_dir is None:
             cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
+        # `pycsghub.utils.get_file_download_url` calls `urllib.parse.quote(revision)`
+        # which raises `quote_from_bytes() expected bytes` when revision is None.
+        if revision is None or revision == 'master':
+            revision = 'main'
         logger.info(f'Downloading the model from CSGHub, model_id: {model_id_or_path}, endpoint: {endpoint}')
         return _csg_download(
             model_id_or_path,
@@ -532,6 +536,8 @@ class CSGHub(HubOperation):
         token = cls._resolve_token(token)
         if cache_dir is None:
             cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
+        if revision is None or revision == 'master':
+            revision = 'main'
         logger.info(f'Loading the dataset from CSGHub, dataset_id: {dataset_id}, endpoint: {endpoint}')
         local_dir = _csg_download(
             dataset_id,
