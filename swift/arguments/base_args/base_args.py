@@ -13,7 +13,7 @@ from swift.ray import RayArguments
 from swift.template import Template, get_template
 from swift.tuner_plugin import tuners_map
 from swift.utils import (Processor, check_json_format, get_dist_setting, get_logger, import_external_file, is_dist,
-                         is_master, json_parse_to_dict, safe_snapshot_download, set_device, use_hf_hub)
+                         is_master, json_parse_to_dict, safe_snapshot_download, set_device)
 from .data_args import DataArguments
 from .generation_args import GenerationArguments
 from .model_args import ModelArguments
@@ -149,13 +149,12 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
 
     def __post_init__(self):
         self.swift_version = swift.__version__
-        # `use_hf` only affects legacy code paths (e.g. MLLM auxiliary downloads);
-        # model download, dataset loading and write-side hub selection no longer derive
-        # their backend from `USE_HF`. Reads cascade CSGHub -> MSHub -> HFHub(hf-mirror)
-        # and writes always go to CSGHub.
-        if self.use_hf or use_hf_hub():
-            self.use_hf = True
-            os.environ['USE_HF'] = '1'
+        # `args.use_hf` is only respected when set explicitly via CLI (`--use_hf true`):
+        #   - True  -> force HFHub for read paths that still consult `args.use_hf`
+        #   - False -> default; reads cascade CSGHub -> MSHub -> HFHub(hf-mirror)
+        # Writes always go to CSGHub regardless. The `USE_HF` env var no longer auto-
+        # promotes `args.use_hf` so that finetune images that set `USE_HF=1` for legacy
+        # MLLM auxiliary downloads do not accidentally bypass the read cascade.
         self._init_adapters()
         self._init_ckpt_dir()
         self._import_external_plugins()
