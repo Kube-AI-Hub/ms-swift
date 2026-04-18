@@ -683,6 +683,22 @@ class CSGHub(HubOperation):
 
 _HF_MIRROR_ENDPOINT = 'https://hf-mirror.com'
 
+# Env vars that `huggingface_hub` and `datasets` auto-read for authentication.
+# `HF_TOKEN` in our deployment carries a CSGHub token, so we must hide it from
+# MSHub / HFHub fallbacks to avoid leaking it to the wrong backend.
+_HF_TOKEN_ENV_VARS = ('HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN', 'HUGGINGFACE_HUB_TOKEN')
+
+
+@contextmanager
+def _hide_hf_token_env():
+    """Temporarily remove HF token env vars so non-CSGHub backends see no token."""
+    saved = {k: os.environ.pop(k) for k in _HF_TOKEN_ENV_VARS if k in os.environ}
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            os.environ[k] = v
+
 
 def cascading_download_model(model_id_or_path: str,
                              revision: Optional[str] = None,
@@ -711,38 +727,45 @@ def cascading_download_model(model_id_or_path: str,
         logger.warning(f'CSGHub download failed: {e}, falling back to MSHub')
 
     if model_dir is None:
-        try:
-            model_dir = MSHub.download_model(
-                model_id_or_path,
-                revision,
-                ignore_patterns,
-                token=token,
-                cache_dir=cache_dir,
-                **kwargs)
-        except Exception as e:
-            last_exc = e
-            logger.warning(f'MSHub download failed: {e}, falling back to HFHub (hf-mirror.com)')
+        # `HF_TOKEN` in our deployment is a CSGHub token; do not forward it to
+        # ModelScope. `MODELSCOPE_API_TOKEN` (read by `MSHub.try_login`) is the
+        # only credential MSHub should see.
+        with _hide_hf_token_env():
+            try:
+                model_dir = MSHub.download_model(
+                    model_id_or_path,
+                    revision,
+                    ignore_patterns,
+                    token=None,
+                    cache_dir=cache_dir,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'MSHub download failed: {e}, falling back to HFHub (hf-mirror.com)')
 
     if model_dir is None:
         _orig_endpoint = os.environ.get('HF_ENDPOINT')
         os.environ['HF_ENDPOINT'] = _HF_MIRROR_ENDPOINT
-        try:
-            model_dir = HFHub.download_model(
-                model_id_or_path,
-                revision,
-                ignore_patterns,
-                token=token,
-                cache_dir=cache_dir,
-                endpoint=_HF_MIRROR_ENDPOINT,
-                **kwargs)
-        except Exception as e:
-            raise RuntimeError(
-                f'All download attempts failed (CSGHub, MSHub, HFHub). Last error: {e}') from last_exc
-        finally:
-            if _orig_endpoint is None:
-                os.environ.pop('HF_ENDPOINT', None)
-            else:
-                os.environ['HF_ENDPOINT'] = _orig_endpoint
+        # Same rationale: hide CSGHub `HF_TOKEN` from `huggingface_hub`, which
+        # auto-reads it from the env when no explicit token is provided.
+        with _hide_hf_token_env():
+            try:
+                model_dir = HFHub.download_model(
+                    model_id_or_path,
+                    revision,
+                    ignore_patterns,
+                    token=None,
+                    cache_dir=cache_dir,
+                    endpoint=_HF_MIRROR_ENDPOINT,
+                    **kwargs)
+            except Exception as e:
+                raise RuntimeError(
+                    f'All download attempts failed (CSGHub, MSHub, HFHub). Last error: {e}') from last_exc
+            finally:
+                if _orig_endpoint is None:
+                    os.environ.pop('HF_ENDPOINT', None)
+                else:
+                    os.environ['HF_ENDPOINT'] = _orig_endpoint
 
     return model_dir
 
@@ -786,41 +809,47 @@ def cascading_load_dataset(csg_dataset_id: Optional[str],
             logger.warning(f'CSGHub dataset load failed: {e}, falling back to MSHub')
 
     if dataset is None and ms_dataset_id is not None:
-        try:
-            dataset = MSHub.load_dataset(
-                ms_dataset_id,
-                subset_name,
-                split,
-                streaming=streaming,
-                revision=ms_revision,
-                download_mode=download_mode,
-                token=token,
-                num_proc=num_proc,
-                **kwargs)
-        except Exception as e:
-            last_exc = e
-            logger.warning(f'MSHub dataset load failed: {e}, falling back to HFHub (hf-mirror.com)')
+        # Hide CSGHub `HF_TOKEN` from ModelScope; only `MODELSCOPE_API_TOKEN`
+        # should be used for MS authentication.
+        with _hide_hf_token_env():
+            try:
+                dataset = MSHub.load_dataset(
+                    ms_dataset_id,
+                    subset_name,
+                    split,
+                    streaming=streaming,
+                    revision=ms_revision,
+                    download_mode=download_mode,
+                    token=None,
+                    num_proc=num_proc,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'MSHub dataset load failed: {e}, falling back to HFHub (hf-mirror.com)')
 
     if dataset is None and hf_dataset_id is not None:
         _orig_endpoint = os.environ.get('HF_ENDPOINT')
         os.environ['HF_ENDPOINT'] = _HF_MIRROR_ENDPOINT
-        try:
-            dataset = HFHub.load_dataset(
-                hf_dataset_id,
-                subset_name,
-                split,
-                streaming=streaming,
-                revision=hf_revision,
-                download_mode=download_mode,
-                num_proc=num_proc,
-                **kwargs)
-        except Exception as e:
-            last_exc = e
-        finally:
-            if _orig_endpoint is None:
-                os.environ.pop('HF_ENDPOINT', None)
-            else:
-                os.environ['HF_ENDPOINT'] = _orig_endpoint
+        # `datasets.load_dataset` auto-reads `HF_TOKEN` from env; remove it so
+        # the CSGHub token is not sent to hf-mirror.com.
+        with _hide_hf_token_env():
+            try:
+                dataset = HFHub.load_dataset(
+                    hf_dataset_id,
+                    subset_name,
+                    split,
+                    streaming=streaming,
+                    revision=hf_revision,
+                    download_mode=download_mode,
+                    num_proc=num_proc,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+            finally:
+                if _orig_endpoint is None:
+                    os.environ.pop('HF_ENDPOINT', None)
+                else:
+                    os.environ['HF_ENDPOINT'] = _orig_endpoint
 
     if dataset is None:
         raise RuntimeError(
