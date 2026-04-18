@@ -105,8 +105,8 @@ def safe_snapshot_download(model_id_or_path: str,
         with safe_ddp_context(hash_id=model_id_or_path):
             if _endpoint != 'https://hf-mirror.com':
                 try:
-                    from pycsghub.snapshot_download import hub_snapshot_download
-                    model_dir = hub_snapshot_download(
+                    from pycsghub.snapshot_download import snapshot_download as _csg_download
+                    model_dir = _csg_download(
                         model_id_or_path,
                         cache_dir=_download_dir,
                         endpoint=_endpoint,
