@@ -646,7 +646,6 @@ def _default_thread_pool_workers() -> int:
 def create_app(
     thread_pool_workers: Optional[int] = None,
     tensorboard_path_prefix: Optional[str] = None,
-    tensorboard_public_base_url: Optional[str] = None,
 ) -> FastAPI:
     from .tensorboard_manager import (filter_request_headers, filter_response_headers, get_tensorboard_backend_origin,
                                       get_tensorboard_upstream_base, normalize_path_prefix, start_tensorboard,
@@ -654,7 +653,6 @@ def create_app(
 
     tb_prefix = normalize_path_prefix(
         tensorboard_path_prefix or os.environ.get('WEBUI_TENSORBOARD_PREFIX') or '/tensorboard')
-    tb_public_base = tensorboard_public_base_url or os.environ.get('WEBUI_TENSORBOARD_PUBLIC_BASE_URL')
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -844,14 +842,24 @@ def create_app(
             # Use the app default ThreadPoolExecutor (same pool as asyncio.to_thread).
             loop = asyncio.get_running_loop()
             gen = tail_log_file(path)
+            # PEP 479: a bare `StopIteration` raised inside a Future (which is
+            # what `loop.run_in_executor(None, next, gen)` produces when the
+            # generator is exhausted) cannot be propagated and triggers a
+            # noisy "StopIteration interacts badly with generators" error.
+            # Use a sentinel so the worker returns a normal value on EOF.
+            _SENTINEL = object()
+
+            def _next_chunk():
+                return next(gen, _SENTINEL)
+
             while True:
                 try:
-                    text = await loop.run_in_executor(None, next, gen)
-                    yield f'data: {json.dumps({"text": text})}\n\n'
-                except StopIteration:
-                    break
+                    text = await loop.run_in_executor(None, _next_chunk)
                 except Exception:
                     break
+                if text is _SENTINEL:
+                    break
+                yield f'data: {json.dumps({"text": text})}\n\n'
 
         return StreamingResponse(_event_generator(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
@@ -984,16 +992,11 @@ def create_app(
         ok, msg, port, url_suffix = await asyncio.to_thread(_run)
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
-        base = str(request.base_url).rstrip('/')
-        open_url = base + (url_suffix or '/')
-        if tb_public_base:
-            open_url = tb_public_base.rstrip('/') + (url_suffix or '/')
         return {
             'status': 'ok',
             'message': msg,
             'port': port,
             'url': url_suffix,
-            'open_url': open_url,
         }
 
     @app.post('/api/v1/tensorboard/stop')
@@ -1125,6 +1128,10 @@ def create_app(
                     record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
                 except AttributeError:
                     record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
+                # Persist resolved log_file / logging_dir so finished tasks can
+                # still display their training log when the record is selected.
+                record_params['log_file'] = log_file
+                record_params['logging_dir'] = logging_dir
                 await asyncio.to_thread(_save_train_record, req.model, record_params)
             except Exception:
                 pass
@@ -1184,6 +1191,8 @@ def create_app(
                     record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
                 except AttributeError:
                     record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
+                record_params['log_file'] = log_file
+                record_params['logging_dir'] = logging_dir
                 await asyncio.to_thread(_save_scoped_record, 'rlhf', req.model, record_params)
             except Exception:
                 pass
@@ -1248,6 +1257,8 @@ def create_app(
                     record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
                 except AttributeError:
                     record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
+                record_params['log_file'] = log_file
+                record_params['logging_dir'] = logging_dir
                 await asyncio.to_thread(_save_scoped_record, 'grpo', req.model, record_params)
             except Exception:
                 pass
@@ -1551,11 +1562,6 @@ def webui_restful_main(args=None):
             default=None,
             help="URL path prefix for proxied TensorBoard (default: /tensorboard). Overrides WEBUI_TENSORBOARD_PREFIX.",
         )
-        parser.add_argument(
-            '--tensorboard_public_base_url',
-            default=None,
-            help='Optional public origin for TensorBoard links behind a gateway. Overrides WEBUI_TENSORBOARD_PUBLIC_BASE_URL.',
-        )
         parsed = parser.parse_args(args)
         tpw = parsed.thread_pool_workers
         if tpw is None:
@@ -1563,14 +1569,12 @@ def webui_restful_main(args=None):
             if tp_env is not None:
                 tpw = int(tp_env)
         tb_pfx = parsed.tensorboard_path_prefix or os.environ.get('WEBUI_TENSORBOARD_PREFIX')
-        tb_pub = parsed.tensorboard_public_base_url or os.environ.get('WEBUI_TENSORBOARD_PUBLIC_BASE_URL')
         args = WebUIArguments(
             server_name=parsed.server_name,
             server_port=parsed.server_port,
             lang=parsed.lang,
             thread_pool_workers=tpw,
             tensorboard_path_prefix=tb_pfx or '/tensorboard',
-            tensorboard_public_base_url=tb_pub,
         )
 
     server = os.environ.get('WEBUI_SERVER') or args.server_name
@@ -1589,6 +1593,5 @@ def webui_restful_main(args=None):
     application = create_app(
         thread_pool_workers=thread_pool_workers,
         tensorboard_path_prefix=getattr(args, 'tensorboard_path_prefix', None),
-        tensorboard_public_base_url=getattr(args, 'tensorboard_public_base_url', None),
     )
     uvicorn.run(application, host=server, port=port)

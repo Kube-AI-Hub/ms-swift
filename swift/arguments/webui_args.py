@@ -15,7 +15,6 @@ class WebUIArguments:
         thread_pool_workers (Optional[int]): Max threads for asyncio default executor (blocking offload).
             None means min(32, (cpu_count or 1) * 5).
         tensorboard_path_prefix (str): URL path prefix for proxied TensorBoard (e.g. '/tensorboard').
-        tensorboard_public_base_url (Optional[str]): Optional public origin for opening TensorBoard behind a gateway.
     """
     server_name: str = '0.0.0.0'
     server_port: int = 7860
@@ -23,4 +22,3 @@ class WebUIArguments:
     lang: str = 'zh'
     thread_pool_workers: Optional[int] = None
     tensorboard_path_prefix: str = '/tensorboard'
-    tensorboard_public_base_url: Optional[str] = None

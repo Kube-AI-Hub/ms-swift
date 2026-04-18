@@ -5,6 +5,20 @@
   // ── API base (relative to current page path, works under any prefix) ──
   const apiBase = window.location.pathname.replace(/\/[^/]*$/, '').replace(/\/$/, '');
 
+  // Build an absolute TensorBoard URL by appending the backend-provided
+  // relative path (e.g. "/tensorboard/") to the current page URL.
+  // Example: page "https://host/entrypoint/task1/" + "/tensorboard/"
+  //          → "https://host/entrypoint/task1/tensorboard/".
+  function buildTensorBoardUrl(relPath) {
+    const rel = String(relPath || '/tensorboard/').replace(/^\/+/, '');
+    const loc = window.location;
+    let path = loc.pathname || '/';
+    if (!path.endsWith('/')) {
+      path = path.substring(0, path.lastIndexOf('/') + 1);
+    }
+    return loc.origin + path + rel;
+  }
+
   // ── Language ──
   const urlParams = new URLSearchParams(window.location.search);
   let pageLang = urlParams.get('lang') === 'en' ? 'en' : 'zh';
@@ -499,6 +513,27 @@
     if (key === 'train' || key === 'rlhf' || key === 'grpo') stopMetricsPoll(key);
     if (key === 'rlhf' || key === 'grpo') parseTaskProgress(key, '');
     if (key === 'export' || key === 'eval' || key === 'sample') parseTaskProgress(key, '');
+  }
+
+  // When a saved training record is selected, surface its log_file (if any)
+  // in the same training-log textarea used for live tasks. Works for both
+  // running and already-finished tasks since the SSE endpoint tails the file.
+  function maybeShowRecordLog(key, textareaId, params) {
+    const logFile = params && params.log_file;
+    if (!logFile) return;
+    stopLogStream(key);
+    const logEl = document.getElementById(textareaId);
+    if (logEl) {
+      logEl.style.display = '';
+      logEl.value = (window.i18n[pageLang] && window.i18n[pageLang].loadingLog) || '正在加载日志...';
+    }
+    // Seed the per-tab logging_dir so startMetricsPoll (invoked at the end of
+    // startLogStream) can fetch TensorBoard scalars for this historical run.
+    const ld = _absoluteLoggingDir(params && params.logging_dir, logFile);
+    if (key === 'train') trainCurrentLoggingDir = ld || '';
+    else if (key === 'rlhf') rlhfCurrentLoggingDir = ld || '';
+    else if (key === 'grpo') grpoCurrentLoggingDir = ld || '';
+    startLogStream(key, logFile, textareaId);
   }
 
   // ── Helper: populate running tasks select ──
@@ -1036,10 +1071,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ logging_dir: ld }),
         });
-        const openUrl = r.open_url || r.url || '/tensorboard/';
-        const abs = openUrl.startsWith('http')
-          ? openUrl
-          : (window.location.origin + (openUrl.startsWith('/') ? openUrl : '/' + openUrl));
+        const abs = buildTensorBoardUrl(r.url);
         window.open(abs, '_blank', 'noopener');
         trainTbOpen = true;
         const urlEl = document.getElementById('train-tb-url');
@@ -1096,10 +1128,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ logging_dir: ld }),
           });
-          const openUrl = r.open_url || r.url || '/tensorboard/';
-          const abs = openUrl.startsWith('http')
-            ? openUrl
-            : (window.location.origin + (openUrl.startsWith('/') ? openUrl : '/' + openUrl));
+          const abs = buildTensorBoardUrl(r.url);
           window.open(abs, '_blank', 'noopener');
           tbOpenState[prefix] = true;
           const urlEl = document.getElementById(prefix + '-tb-url');
@@ -2183,7 +2212,8 @@
         const sel = document.getElementById('train-record');
         if (sel) {
           sel.value = records[0];
-          await restoreTrainRecord(model, records[0]);
+          const params = await restoreTrainRecord(model, records[0]);
+          maybeShowRecordLog('train', 'train-log', params);
         }
       }
       updateTrainTaskTypeUI(false);
@@ -2197,7 +2227,8 @@
         const sel = document.getElementById('rlhf-record');
         if (sel) {
           sel.value = records[0];
-          await restoreScopedRecord('rlhf', model, records[0], RLHF_RECORD_FIELD_MAP, 'rlhf-dataset-box', 'rlhf-dataset');
+          const params = await restoreScopedRecord('rlhf', model, records[0], RLHF_RECORD_FIELD_MAP, 'rlhf-dataset-box', 'rlhf-dataset');
+          maybeShowRecordLog('rlhf', 'rlhf-log', params);
         }
       }
       syncRlhfMetricsKeys();
@@ -2211,7 +2242,8 @@
         const sel = document.getElementById('grpo-record');
         if (sel) {
           sel.value = records[0];
-          await restoreScopedRecord('grpo', model, records[0], GRPO_RECORD_FIELD_MAP, 'grpo-dataset-box', 'grpo-dataset');
+          const params = await restoreScopedRecord('grpo', model, records[0], GRPO_RECORD_FIELD_MAP, 'grpo-dataset-box', 'grpo-dataset');
+          maybeShowRecordLog('grpo', 'grpo-log', params);
         }
       }
       scheduleGrpoCommandPreview();
@@ -2356,9 +2388,11 @@
   }
 
   async function restoreScopedRecord(scope, model, timestamp, fieldMap, boxId, hiddenId) {
-    if (!model || !timestamp) return;
+    if (!model || !timestamp) return null;
+    let restoredParams = null;
     try {
       const params = await apiFetch(`/api/v1/${scope}/records/detail?model=` + encodeURIComponent(model) + '&timestamp=' + encodeURIComponent(timestamp));
+      restoredParams = params;
       if (params.dataset && Array.isArray(params.dataset)) {
         const box = document.getElementById(boxId);
         const hidden = document.getElementById(hiddenId);
@@ -2402,6 +2436,7 @@
       updateGrpoVllmModeUI(false);
       scheduleGrpoCommandPreview();
     }
+    return restoredParams;
   }
 
   async function loadTrainRecords(model) {
@@ -2424,13 +2459,15 @@
   }
 
   async function restoreTrainRecord(model, timestamp) {
-    if (!model || !timestamp) return;
+    if (!model || !timestamp) return null;
     trainRestoring = true;
+    let restoredParams = null;
     try {
       const params = await apiFetch(
         '/api/v1/train/records/detail?model=' + encodeURIComponent(model) +
         '&timestamp=' + encodeURIComponent(timestamp)
       );
+      restoredParams = params;
       // Restore datasets tag-input
       if (params.dataset && Array.isArray(params.dataset)) {
         const box = document.getElementById('train-dataset-box');
@@ -2480,13 +2517,17 @@
     trainRestoring = false;
     updateTrainTaskTypeUI(false);
     scheduleTrainCommandPreview();
+    return restoredParams;
   }
 
   // Wire record dropdown
   document.getElementById('train-record').addEventListener('change', async () => {
     const model = val('train-model');
     const ts = document.getElementById('train-record').value;
-    if (ts) await restoreTrainRecord(model, ts);
+    if (ts) {
+      const params = await restoreTrainRecord(model, ts);
+      maybeShowRecordLog('train', 'train-log', params);
+    }
     scheduleTrainCommandPreview();
   });
 
@@ -2505,15 +2546,19 @@
     const model = val('rlhf-model');
     const ts = document.getElementById('rlhf-record').value;
     if (ts) {
-      await restoreScopedRecord('rlhf', model, ts, RLHF_RECORD_FIELD_MAP, 'rlhf-dataset-box', 'rlhf-dataset');
+      const params = await restoreScopedRecord('rlhf', model, ts, RLHF_RECORD_FIELD_MAP, 'rlhf-dataset-box', 'rlhf-dataset');
       syncRlhfMetricsKeys();
+      maybeShowRecordLog('rlhf', 'rlhf-log', params);
     }
   });
 
   document.getElementById('grpo-record').addEventListener('change', async () => {
     const model = val('grpo-model');
     const ts = document.getElementById('grpo-record').value;
-    if (ts) await restoreScopedRecord('grpo', model, ts, GRPO_RECORD_FIELD_MAP, 'grpo-dataset-box', 'grpo-dataset');
+    if (ts) {
+      const params = await restoreScopedRecord('grpo', model, ts, GRPO_RECORD_FIELD_MAP, 'grpo-dataset-box', 'grpo-dataset');
+      maybeShowRecordLog('grpo', 'grpo-log', params);
+    }
   });
 
   document.getElementById('rlhf-btn-clear-records').addEventListener('click', async () => {
@@ -2781,15 +2826,47 @@
         const sel = document.getElementById('train-record');
         if (sel && records[0]) {
           sel.value = records[0];
-          restoreTrainRecord(initModel, records[0]);
+          restoreTrainRecord(initModel, records[0]).then(params => {
+            maybeShowRecordLog('train', 'train-log', params);
+          });
         }
       }
     });
   }
   const initRlhfModel = val('rlhf-model');
-  if (initRlhfModel) loadScopedRecords('rlhf', initRlhfModel, 'rlhf-record');
+  if (initRlhfModel) {
+    loadScopedRecords('rlhf', initRlhfModel, 'rlhf-record').then(records => {
+      if (!records || records.length === 0) return;
+      const tasksSel = document.getElementById('rlhf-running-tasks');
+      const hasRunning = tasksSel && tasksSel.options.length > 0 && tasksSel.options[0].value;
+      if (!hasRunning) {
+        const sel = document.getElementById('rlhf-record');
+        if (sel && records[0]) {
+          sel.value = records[0];
+          restoreScopedRecord('rlhf', initRlhfModel, records[0], RLHF_RECORD_FIELD_MAP, 'rlhf-dataset-box', 'rlhf-dataset').then(params => {
+            maybeShowRecordLog('rlhf', 'rlhf-log', params);
+          });
+        }
+      }
+    });
+  }
   const initGrpoModel = val('grpo-model');
-  if (initGrpoModel) loadScopedRecords('grpo', initGrpoModel, 'grpo-record');
+  if (initGrpoModel) {
+    loadScopedRecords('grpo', initGrpoModel, 'grpo-record').then(records => {
+      if (!records || records.length === 0) return;
+      const tasksSel = document.getElementById('grpo-running-tasks');
+      const hasRunning = tasksSel && tasksSel.options.length > 0 && tasksSel.options[0].value;
+      if (!hasRunning) {
+        const sel = document.getElementById('grpo-record');
+        if (sel && records[0]) {
+          sel.value = records[0];
+          restoreScopedRecord('grpo', initGrpoModel, records[0], GRPO_RECORD_FIELD_MAP, 'grpo-dataset-box', 'grpo-dataset').then(params => {
+            maybeShowRecordLog('grpo', 'grpo-log', params);
+          });
+        }
+      }
+    });
+  }
 
   // Refresh all other tabs; auto-select the first task if exactly one is running
   ['infer', 'export', 'eval', 'sample'].forEach(prefix => {
