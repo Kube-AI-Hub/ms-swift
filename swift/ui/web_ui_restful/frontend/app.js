@@ -624,6 +624,13 @@
     });
   }
 
+  function clearTrainRunPathFields() {
+    const outputDir = document.getElementById('train-output-dir');
+    const loggingDir = document.getElementById('train-logging-dir');
+    if (outputDir) outputDir.value = '';
+    if (loggingDir) loggingDir.value = '';
+  }
+
   function seedDefaultTrainDatasetIfEmpty() {
     const hidden = document.getElementById('train-dataset');
     if (!hidden) return;
@@ -2284,8 +2291,6 @@
     gradient_accumulation_steps: 'train-grad-accum',
     attn_impl:                   'train-attn-impl',
     neftune_noise_alpha:         'train-neftune-alpha',
-    output_dir:                  'train-output-dir',
-    logging_dir:                 'train-logging-dir',
     system:                      'train-system',
     envs:                        'train-envs',
     more_params:                 'train-more-params',
@@ -2514,6 +2519,7 @@
           el.value = params[key];
         }
       }
+      clearTrainRunPathFields();
       // Sync sliders to restored number-input values
       document.querySelectorAll('.range-slider').forEach(slider => {
         const targetId = slider.getAttribute('data-target');
