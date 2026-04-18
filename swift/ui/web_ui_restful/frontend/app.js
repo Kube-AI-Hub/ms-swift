@@ -223,6 +223,7 @@
     gkd:   ['train/loss', 'train/rewards/accuracies', 'train/rewards/margins', 'train/logps/chosen', 'train/logps/rejected'],
   };
   const GRPO_KEYS = ['train/loss', 'train/reward', 'train/learning_rate', 'train/completions/mean_length', 'train/kl'];
+  const DEFAULT_TRAIN_DATASETS = ['swift/self-cognition'];
 
   const METRICS_CFG = {
     train: { keys: ['train/loss', 'train/acc', 'train/learning_rate', 'eval/loss', 'eval/acc'], endpoint: '/api/v1/train/tensorboard-metrics', slotBased: false },
@@ -621,6 +622,14 @@
       textIn.value = v;
       textIn.dispatchEvent(new Event('change'));
     });
+  }
+
+  function seedDefaultTrainDatasetIfEmpty() {
+    const hidden = document.getElementById('train-dataset');
+    if (!hidden) return;
+    if ((hidden.value || '').trim()) return;
+    setTagInputValues('train', DEFAULT_TRAIN_DATASETS);
+    scheduleTrainCommandPreview();
   }
 
   // ── Helper: restore infer form fields from a running deploy task ──
@@ -2216,6 +2225,7 @@
           maybeShowRecordLog('train', 'train-log', params);
         }
       }
+      seedDefaultTrainDatasetIfEmpty();
       updateTrainTaskTypeUI(false);
       scheduleTrainCommandPreview();
     }
@@ -2818,7 +2828,10 @@
   const initModel = val('train-model');
   if (initModel) {
     loadTrainRecords(initModel).then(records => {
-      if (!records || records.length === 0) return;
+      if (!records || records.length === 0) {
+        seedDefaultTrainDatasetIfEmpty();
+        return;
+      }
       // Check if a train task is running; if not, restore the last record
       const tasksSel = document.getElementById('train-running-tasks');
       const hasRunning = tasksSel && tasksSel.options.length > 0 && tasksSel.options[0].value;
@@ -2828,10 +2841,15 @@
           sel.value = records[0];
           restoreTrainRecord(initModel, records[0]).then(params => {
             maybeShowRecordLog('train', 'train-log', params);
+            seedDefaultTrainDatasetIfEmpty();
           });
         }
+      } else {
+        seedDefaultTrainDatasetIfEmpty();
       }
     });
+  } else {
+    seedDefaultTrainDatasetIfEmpty();
   }
   const initRlhfModel = val('rlhf-model');
   if (initRlhfModel) {
@@ -2904,6 +2922,7 @@
   loadDatalistOptions();
   initTagInputs();
   initSliderInputs();
+  seedDefaultTrainDatasetIfEmpty();
   updateTrainTaskTypeUI(false);
   updateRlhfTypeUI(false);
   updateGrpoVllmModeUI(false);
