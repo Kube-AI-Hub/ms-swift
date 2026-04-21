@@ -9,12 +9,22 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import psutil
+from transformers.utils import is_torch_cuda_available, is_torch_npu_available
 
-from swift.utils import format_time, get_logger
+from swift.utils import format_time, get_device_count, get_logger
 
 logger = get_logger()
 
 MAX_LOG_LINES = int(os.environ.get('MAX_LOG_LINES', 200))
+
+
+def _normalize_gpu_value_for_ui(gpu_val: str) -> str:
+    if gpu_val == '0' and get_device_count() == 1:
+        if is_torch_npu_available():
+            return 'npu'
+        if is_torch_cuda_available():
+            return 'gpu'
+    return gpu_val
 
 
 def get_running_tasks(cmd_name: str) -> List[Dict]:
@@ -97,7 +107,7 @@ def _build_task_info(proc) -> Dict:
                    or env.get('ASCEND_RT_VISIBLE_DEVICES')
                    or env.get('MLU_VISIBLE_DEVICES'))
         if gpu_val:
-            parsed_args['gpu_ids'] = gpu_val
+            parsed_args['gpu_ids'] = _normalize_gpu_value_for_ui(gpu_val)
     except Exception:
         pass
     return {

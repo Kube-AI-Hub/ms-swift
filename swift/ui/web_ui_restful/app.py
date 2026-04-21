@@ -19,7 +19,9 @@ import time
 
 import swift
 from swift.arguments import WebUIArguments
-from swift.utils import get_logger, get_ui_device_info
+from transformers.utils import is_torch_cuda_available, is_torch_npu_available
+
+from swift.utils import get_device_count, get_logger, get_ui_device_info
 
 from .utils import (get_all_running_tasks, get_running_tasks, get_used_ports, kill_task_by_log,
                     tail_log_file)
@@ -315,6 +317,10 @@ def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
     gpu_ids = [g for g in gpu_ids if g]
     if not gpu_ids or gpu_ids == ['cpu']:
         return {}
+    if gpu_ids == ['gpu'] and is_torch_cuda_available() and get_device_count() == 1:
+        gpu_ids = ['0']
+    elif gpu_ids == ['npu'] and is_torch_npu_available() and get_device_count() == 1:
+        gpu_ids = ['0']
     gpus = ','.join(gpu_ids)
     try:
         from transformers.utils import is_torch_cuda_available, is_torch_npu_available
@@ -328,6 +334,16 @@ def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
     except Exception:
         pass
     return {'CUDA_VISIBLE_DEVICES': gpus}
+
+
+def _get_restful_ui_device_info() -> tuple[List[str], str]:
+    device_count = get_device_count()
+    if device_count == 1:
+        if is_torch_npu_available():
+            return ['npu', 'cpu'], 'npu'
+        if is_torch_cuda_available():
+            return ['gpu', 'cpu'], 'gpu'
+    return get_ui_device_info()
 
 
 def _parse_more_params(more_params: Optional[str]) -> tuple:
@@ -676,7 +692,7 @@ def create_app(
     # ------------------------------------------------------------------
     @app.get('/health')
     async def health():
-        device_choices, default_device = await asyncio.to_thread(get_ui_device_info)
+        device_choices, default_device = await asyncio.to_thread(_get_restful_ui_device_info)
         try:
             version = swift.__version__
         except AttributeError:
@@ -694,7 +710,7 @@ def create_app(
     # ------------------------------------------------------------------
     @app.get('/api/v1/devices')
     async def devices():
-        device_choices, default_device = get_ui_device_info()
+        device_choices, default_device = _get_restful_ui_device_info()
         return {'devices': device_choices, 'default': default_device}
 
     # ------------------------------------------------------------------
