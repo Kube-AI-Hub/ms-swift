@@ -21,7 +21,7 @@ import swift
 from swift.arguments import WebUIArguments
 from transformers.utils import is_torch_cuda_available, is_torch_npu_available
 
-from swift.utils import get_device_count, get_logger, get_ui_device_info
+from swift.utils import get_device_count, get_logger, get_ui_device_info, is_torch_mlu_available
 
 from .utils import (get_all_running_tasks, get_running_tasks, get_used_ports, kill_task_by_log,
                     tail_log_file)
@@ -323,8 +323,6 @@ def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
         gpu_ids = ['0']
     gpus = ','.join(gpu_ids)
     try:
-        from transformers.utils import is_torch_cuda_available, is_torch_npu_available
-        from swift.utils import is_torch_mlu_available
         if is_torch_npu_available():
             return {'ASCEND_RT_VISIBLE_DEVICES': gpus}
         elif is_torch_cuda_available():
