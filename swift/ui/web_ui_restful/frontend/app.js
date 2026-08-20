@@ -2672,6 +2672,47 @@
     });
   }
 
+  function applyGpuDeviceOptions(devices, defaultDevice) {
+    if (!Array.isArray(devices) || devices.length === 0) return false;
+    const gpuSelectIds = ['train-gpu-ids','rlhf-gpu-ids','grpo-gpu-ids',
+                          'infer-gpu-ids','export-gpu-ids','eval-gpu-ids','sample-gpu-ids'];
+    gpuSelectIds.forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      const prev = Array.from(sel.selectedOptions).map(o => o.value);
+      sel.innerHTML = '';
+      devices.forEach(d => {
+        const o = document.createElement('option');
+        o.value = d;
+        o.textContent = d;
+        // Keep prior selection across retries; otherwise use server default.
+        if (prev.length ? prev.includes(d) : d === defaultDevice) o.selected = true;
+        sel.appendChild(o);
+      });
+      // Ensure at least the default (or first) option is selected for multi-select.
+      if (!Array.from(sel.selectedOptions).length && sel.options.length) {
+        const fallback = defaultDevice
+          ? Array.from(sel.options).find(o => o.value === defaultDevice)
+          : null;
+        (fallback || sel.options[0]).selected = true;
+      }
+    });
+    return true;
+  }
+
+  async function loadGpuDeviceOptions(retries = 4) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const data = await apiFetch('/api/v1/devices');
+        if (applyGpuDeviceOptions(data.devices, data.default)) return true;
+      } catch (_) {}
+      if (i < retries - 1) {
+        await new Promise(r => setTimeout(r, 150 * (i + 1)));
+      }
+    }
+    return false;
+  }
+
   async function loadDatalistOptions() {
     const populate = (id, items) => {
       const dl = document.getElementById(id);
@@ -2684,37 +2725,24 @@
       });
     };
 
+    // Load devices with dedicated retries so NPU probe races do not leave the
+    // GPU dropdown empty after a page refresh. Keep it independent of the
+    // heavier models/datasets endpoints.
+    const devicesPromise = loadGpuDeviceOptions();
+
     try {
-      const [mRes, mtRes, tmRes, dsRes, dvRes] = await Promise.allSettled([
+      const [mRes, mtRes, tmRes, dsRes] = await Promise.allSettled([
         apiFetch('/api/v1/models'),
         apiFetch('/api/v1/model-types'),
         apiFetch('/api/v1/templates'),
         apiFetch('/api/v1/datasets'),
-        apiFetch('/api/v1/devices'),
       ]);
       if (mRes.status  === 'fulfilled') populate('dl-models',      mRes.value.models      || []);
       if (mtRes.status === 'fulfilled') populate('dl-model-types', mtRes.value.model_types || []);
       if (tmRes.status === 'fulfilled') populate('dl-templates',   tmRes.value.templates   || []);
       if (dsRes.status === 'fulfilled') populate('dl-datasets',    dsRes.value.datasets    || []);
-      if (dvRes.status === 'fulfilled' && dvRes.value.devices) {
-        const devices = dvRes.value.devices;
-        const defaultDevice = dvRes.value.default;
-        const gpuSelectIds = ['train-gpu-ids','rlhf-gpu-ids','grpo-gpu-ids',
-                              'infer-gpu-ids','export-gpu-ids','eval-gpu-ids','sample-gpu-ids'];
-        gpuSelectIds.forEach(id => {
-          const sel = document.getElementById(id);
-          if (!sel) return;
-          sel.innerHTML = '';
-          devices.forEach(d => {
-            const o = document.createElement('option');
-            o.value = d;
-            o.textContent = d;
-            if (d === defaultDevice) o.selected = true;
-            sel.appendChild(o);
-          });
-        });
-      }
     } catch (_) {}
+    await devicesPromise;
   }
 
   // ── Slider + number input sync ──

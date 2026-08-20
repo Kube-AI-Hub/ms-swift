@@ -311,15 +311,27 @@ def _timestamp() -> str:
     return f'{now.year}{now.month:02d}{now.day:02d}{now.hour:02d}{now.minute:02d}{now.second:02d}'
 
 
+# Clear all accelerator visibility masks so a child process does not inherit the
+# parent Web-UI's CUDA/ASCEND/MLU devices when the user explicitly selects CPU.
+_CPU_CLEAR_ENV = {
+    'CUDA_VISIBLE_DEVICES': '',
+    'ASCEND_RT_VISIBLE_DEVICES': '',
+    'MLU_VISIBLE_DEVICES': '',
+}
+
+# Cache durable device-list results to avoid intermittent empty GPU dropdowns on
+# NPU (torch.npu.device_count can briefly fail or return 0 under concurrent load).
+_DEVICE_INFO_CACHE: Optional[tuple] = None
+
+
 def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
     if not gpu_ids:
         return {}
     gpu_ids = [g for g in gpu_ids if g]
-    if not gpu_ids or gpu_ids == ['cpu']:
-        return {}
-    if gpu_ids == ['gpu'] and is_torch_cuda_available() and get_device_count() == 1:
-        gpu_ids = ['0']
-    elif gpu_ids == ['npu'] and is_torch_npu_available() and get_device_count() == 1:
+    if not gpu_ids or 'cpu' in gpu_ids:
+        return dict(_CPU_CLEAR_ENV)
+    # Single-device UI labels (gpu/npu/mlu) always map to physical index 0.
+    if len(gpu_ids) == 1 and gpu_ids[0] in ('gpu', 'npu', 'mlu'):
         gpu_ids = ['0']
     gpus = ','.join(gpu_ids)
     try:
@@ -334,14 +346,73 @@ def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
     return {'CUDA_VISIBLE_DEVICES': gpus}
 
 
+def _safe_device_count() -> int:
+    """Probe accelerator count with short retries (NPU can briefly report 0)."""
+    last_err: Optional[BaseException] = None
+    for attempt in range(3):
+        try:
+            count = get_device_count()
+            if count > 0:
+                return count
+        except Exception as e:
+            last_err = e
+            logger.warning('get_device_count failed (attempt %s): %s', attempt + 1, e)
+        if attempt < 2:
+            time.sleep(0.05)
+    if last_err is not None:
+        logger.warning('get_device_count ultimately failed, treating as 0: %s', last_err)
+    return 0
+
+
+def _probe_restful_ui_device_info() -> tuple[List[str], str, bool]:
+    """Return (choices, default, durable).
+
+    ``durable`` is True when the runtime reported a positive device count (safe to
+    cache). Transient 0-count fallbacks still return accelerator labels so the UI
+    is not empty, but are not cached.
+    """
+    device_count = _safe_device_count()
+    durable = device_count > 0
+    try:
+        npu = is_torch_npu_available()
+    except Exception:
+        npu = False
+    try:
+        cuda = is_torch_cuda_available()
+    except Exception:
+        cuda = False
+    try:
+        mlu = is_torch_mlu_available()
+    except Exception:
+        mlu = False
+
+    # Prefer accelerator-type labels even when runtime count briefly reports 0,
+    # so the UI dropdown is not empty after refresh on NPU/GPU hosts.
+    if npu:
+        if device_count <= 1:
+            return ['npu', 'cpu'], 'npu', durable
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+    if cuda:
+        if device_count <= 1:
+            return ['gpu', 'cpu'], 'gpu', durable
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+    if mlu:
+        if device_count <= 1:
+            return ['mlu', 'cpu'], 'mlu', durable
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+    choices, default = get_ui_device_info()
+    return choices, default, True
+
+
 def _get_restful_ui_device_info() -> tuple[List[str], str]:
-    device_count = get_device_count()
-    if device_count == 1:
-        if is_torch_npu_available():
-            return ['npu', 'cpu'], 'npu'
-        if is_torch_cuda_available():
-            return ['gpu', 'cpu'], 'gpu'
-    return get_ui_device_info()
+    global _DEVICE_INFO_CACHE
+    if _DEVICE_INFO_CACHE is not None:
+        return _DEVICE_INFO_CACHE
+    choices, default, durable = _probe_restful_ui_device_info()
+    info = (choices, default)
+    if durable and choices:
+        _DEVICE_INFO_CACHE = info
+    return info
 
 
 def _parse_more_params(more_params: Optional[str]) -> tuple:
@@ -708,7 +779,9 @@ def create_app(
     # ------------------------------------------------------------------
     @app.get('/api/v1/devices')
     async def devices():
-        device_choices, default_device = _get_restful_ui_device_info()
+        # Offload NPU/CUDA probes off the event loop; concurrent page-refresh
+        # loads previously raced with heavy /models|/datasets imports.
+        device_choices, default_device = await asyncio.to_thread(_get_restful_ui_device_info)
         return {'devices': device_choices, 'default': default_device}
 
     # ------------------------------------------------------------------
