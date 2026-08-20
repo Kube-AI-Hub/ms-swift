@@ -220,6 +220,20 @@ class Template(ProcessorMixin):
             self._agent_template_cache[self._agent_template] = agent_template_map[self._agent_template]()
         return self._agent_template_cache[self._agent_template]
 
+    def __getstate__(self):
+        # DataLoader workers (spawn / forkserver) pickle collate_fn = partial(self.data_collator, ...).
+        # Omit nn.Module refs and forward-hook state: they pull in unpicklable closures from
+        # PreTrainedModel.enable_input_require_grads and are not needed in workers (collate only).
+        state = self.__dict__.copy()
+        state['model'] = None
+        state['dummy_model'] = None
+        state['_handles'] = []
+        state['_deepspeed_initialize'] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     def init_env_args(self):
         if self.model_meta.is_multimodal:
             self.root_image_dir = get_env_args('ROOT_IMAGE_DIR', str, None)
