@@ -575,6 +575,11 @@ def _build_train_command(req: TrainRequest, subcmd: str, extra_flags: Optional[l
     for k, v in mp_dict.items():
         _add(k, v)
     _add_more_params_to_cmd(command, mp_cmd)
+    # Hiding accelerators is not enough for Transformers: its training
+    # arguments must also be told explicitly to initialize a CPU device.
+    # Add this last so custom more_params cannot contradict the UI selection.
+    if req.gpu_ids and 'cpu' in req.gpu_ids:
+        _add('use_cpu', True)
 
     # log file
     os.makedirs(logging_dir, exist_ok=True)
