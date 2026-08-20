@@ -43,7 +43,7 @@ from typing import Callable, Dict, List, Optional
 
 from swift.callbacks import callbacks_map
 from swift.dataloader import BatchSamplerShard, DataLoaderDispatcher, DataLoaderShard
-from swift.hub import get_hub
+from swift.hub import get_write_hub
 from swift.loss import loss_map
 from swift.metrics import MeanMetric, compute_acc, eval_metrics_map
 from swift.model import get_llm_model, get_lm_head_model, save_checkpoint
@@ -109,7 +109,7 @@ class SwiftMixin:
             'train': collections.defaultdict(_get_mean_metric),
             'eval': collections.defaultdict(_get_mean_metric)
         }
-        self.hub = get_hub()
+        self.hub = get_write_hub()
 
         self.model_meta = model.model_meta
         self.model_info = model.model_info

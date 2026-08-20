@@ -9,13 +9,13 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import swift
 from swift.dataset import load_dataset
-from swift.hub import get_hub
+from swift.hub import get_write_hub
 from swift.model import get_ckpt_dir, get_model_processor, load_by_unsloth
 from swift.ray_utils import RayArguments
 from swift.template import Template, get_template
 from swift.tuner_plugin import tuners_map
 from swift.utils import (Processor, check_json_format, get_dist_setting, get_logger, import_external_file, is_dist,
-                         is_master, json_parse_to_dict, safe_snapshot_download, set_device, use_hf_hub)
+                         is_master, json_parse_to_dict, safe_snapshot_download, set_device)
 from .data_args import DataArguments
 from .generation_args import GenerationArguments
 from .model_args import ModelArguments
@@ -172,9 +172,12 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
     def __post_init__(self):
         _patch_peft()
         self.swift_version = swift.__version__
-        if self.use_hf or use_hf_hub():
-            self.use_hf = True
-            os.environ['USE_HF'] = '1'
+        # `args.use_hf` is only respected when set explicitly via CLI (`--use_hf true`):
+        #   - True  -> force HFHub for read paths that still consult `args.use_hf`
+        #   - False -> default; reads cascade CSGHub -> MSHub -> HFHub(hf-mirror)
+        # Writes always go to CSGHub regardless. The `USE_HF` env var no longer auto-
+        # promotes `args.use_hf` so that finetune images that set `USE_HF=1` for legacy
+        # MLLM auxiliary downloads do not accidentally bypass the read cascade.
         self._init_adapters()
         self._init_ckpt_dir()
         self._import_external_plugins()
@@ -198,7 +201,8 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
         if self.packing and self.packing_length is None:
             self.packing_length = self.max_length
         self._init_lazy_tokenize()
-        self.hub = get_hub(self.use_hf)
+        # Write operations (push_to_hub, create_model_repo, login) always target CSGHub.
+        self.hub = get_write_hub()
         if self.hub.try_login(self.hub_token):
             logger.info('hub login successful!')
 

@@ -40,9 +40,10 @@ def safe_snapshot_download(model_id_or_path: str,
         download_model (bool, optional): Whether to download model weight files
             (.bin, .safetensors). If False, only config and tokenizer files are
             downloaded. Defaults to True.
-        use_hf (Optional[bool], optional): Force using HuggingFace Hub (True) or ModelScope (False).
-            If None, it is controlled by the environment variable `USE_HF`, which defaults to '0'.
-            Default: None.
+        use_hf (Optional[bool], optional): Only `True` (explicit CLI `--use_hf true`) forces
+            HuggingFace Hub. `None`/`False` (the dataclass default, indistinguishable from
+            "not specified") follow the read cascade CSGHub -> MSHub -> HFHub(hf-mirror)
+            regardless of `USE_HF`. Default: None.
         hub_token (Optional[str], optional): Authentication token for accessing private
             or gated models. Defaults to None.
         ignore_patterns (Optional[List[str]], optional): List of glob patterns for files
@@ -80,7 +81,6 @@ def safe_snapshot_download(model_id_or_path: str,
         ]
     if not download_model:
         ignore_patterns += ['*.bin', '*.safetensors']
-    hub = get_hub(use_hf)
     if model_id_or_path.startswith('~'):
         model_id_or_path = os.path.abspath(os.path.expanduser(model_id_or_path))
     model_path_to_check = '/'.join(model_id_or_path.split(':', 1))
@@ -100,7 +100,24 @@ def safe_snapshot_download(model_id_or_path: str,
         if sub_folder is not None:
             kwargs['allow_patterns'] = [f"{sub_folder.rstrip('/')}/*"]
         with safe_ddp_context(hash_id=model_id_or_path):
-            model_dir = hub.download_model(model_id_or_path, revision, ignore_patterns, token=hub_token, **kwargs)
+            if use_hf is not True:
+                # Read cascade: CSGHub -> MSHub -> HFHub(hf-mirror). `False` also cascades
+                # because it is the `BaseArguments.use_hf` dataclass default and many call
+                # sites forward it unconditionally.
+                from swift.hub.hub import cascading_download_model
+                _token = os.getenv('HF_TOKEN') or os.getenv('ACCESS_TOKEN', '')
+                _effective_token = _token or hub_token
+                _download_dir = os.getenv('HUGGINGFACE_HUB_CACHE', './download')
+                model_dir = cascading_download_model(
+                    model_id_or_path,
+                    revision=revision,
+                    ignore_patterns=ignore_patterns,
+                    token=_effective_token,
+                    cache_dir=_download_dir,
+                    **kwargs)
+            else:
+                hub = get_hub(True)
+                model_dir = hub.download_model(model_id_or_path, revision, ignore_patterns, token=hub_token, **kwargs)
 
         logger.info(f'Loading the model using model_dir: {model_dir}')
 

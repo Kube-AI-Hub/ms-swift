@@ -9,8 +9,8 @@ from functools import partial
 from modelscope.hub.utils.utils import get_cache_dir
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
-from swift.hub import get_hub
-from swift.utils import get_logger, get_seed, safe_ddp_context, use_hf_hub
+from swift.hub import cascading_load_dataset, get_hub
+from swift.utils import get_logger, get_seed, safe_ddp_context
 from .dataset_meta import DATASET_TYPE, BaseDatasetLoader
 from .dataset_syntax import DatasetSyntax
 from .preprocessor import RowPreprocessor
@@ -75,12 +75,14 @@ class DatasetLoader(BaseDatasetLoader):
         *,
         use_hf: Optional[bool] = None,
         revision: Optional[str] = None,
+        dataset_meta: Optional[DatasetMeta] = None,
     ) -> HfDataset:
         datasets = []
+        local_dir = False
         if os.path.isdir(dataset_id):
             retry = 1
             load_context = nullcontext
-            use_hf = True
+            local_dir = True
             dataset_str = f'Use local folder, dataset_dir: {dataset_id}'
             # The dataset downloaded from modelscope will have an additional dataset_infos.json file.
             with safe_ddp_context('dataset_infos_rename'):
@@ -93,27 +95,62 @@ class DatasetLoader(BaseDatasetLoader):
         else:
             retry = 3
             load_context = partial(safe_ddp_context, hash_id=dataset_id, use_barrier=True)
-            dataset_str_f = 'Downloading the dataset from {hub}, dataset_id: {dataset_id}'
-            if use_hf:
-                dataset_str = dataset_str_f.format(hub='HuggingFace', dataset_id=dataset_id)
+            if use_hf is True:
+                dataset_str = f'Downloading the dataset from HuggingFace, dataset_id: {dataset_id}'
+            elif use_hf is False:
+                dataset_str = f'Downloading the dataset from ModelScope, dataset_id: {dataset_id}'
             else:
-                dataset_str = dataset_str_f.format(hub='ModelScope', dataset_id=dataset_id)
+                dataset_str = (f'Downloading the dataset with cascade '
+                               f'CSGHub -> MSHub -> HFHub(hf-mirror), dataset_id: {dataset_id}')
         logger.info(dataset_str)
-        hub = get_hub(use_hf)
+
+        # Resolve per-backend ids and revisions for the cascade case.
+        meta = dataset_meta
+        hf_id = (meta and meta.hf_dataset_id) or dataset_id
+        ms_id = (meta and meta.ms_dataset_id) or dataset_id
+        hf_rev = (meta and meta.hf_revision) or revision
+        ms_rev = (meta and meta.ms_revision) or revision
+
         for split in subset.split:
             i = 1
             with load_context():
                 while True:
                     try:
-                        dataset = hub.load_dataset(
-                            dataset_id,
-                            subset.subset,
-                            split,
-                            streaming=self.streaming,
-                            revision=revision,
-                            download_mode=self.download_mode,
-                            hub_token=self.hub_token,
-                            num_proc=self.num_proc)
+                        if local_dir:
+                            # Local folders are loaded via the HF datasets library directly.
+                            from swift.hub.hub import HFHub
+                            dataset = HFHub.load_dataset(
+                                dataset_id,
+                                subset.subset,
+                                split,
+                                streaming=self.streaming,
+                                revision=revision,
+                                download_mode=self.download_mode,
+                                num_proc=self.num_proc)
+                        elif use_hf is True or use_hf is False:
+                            hub = get_hub(use_hf)
+                            dataset = hub.load_dataset(
+                                dataset_id,
+                                subset.subset,
+                                split,
+                                streaming=self.streaming,
+                                revision=revision,
+                                download_mode=self.download_mode,
+                                hub_token=self.hub_token,
+                                num_proc=self.num_proc)
+                        else:
+                            dataset = cascading_load_dataset(
+                                csg_dataset_id=hf_id,
+                                hf_dataset_id=hf_id,
+                                ms_dataset_id=ms_id,
+                                subset_name=subset.subset,
+                                split=split,
+                                hf_revision=hf_rev,
+                                ms_revision=ms_rev,
+                                streaming=self.streaming,
+                                download_mode=self.download_mode,
+                                token=self.hub_token,
+                                num_proc=self.num_proc)
                     except Exception as e:
                         if i == retry:
                             raise
@@ -173,7 +210,13 @@ class DatasetLoader(BaseDatasetLoader):
             )
         else:
             subsets: List[SubsetDataset] = self._select_subsets(dataset_syntax.subsets, dataset_meta)
-            revision = dataset_meta.hf_revision if use_hf else dataset_meta.ms_revision
+            if use_hf is True:
+                revision = dataset_meta.hf_revision
+            elif use_hf is False:
+                revision = dataset_meta.ms_revision
+            else:
+                # Cascade picks the right revision per backend from `dataset_meta`.
+                revision = None
             datasets = []
             for subset in subsets:
                 dataset = self._load_repo_dataset(
@@ -181,6 +224,7 @@ class DatasetLoader(BaseDatasetLoader):
                     subset,
                     use_hf=use_hf,
                     revision=revision,
+                    dataset_meta=dataset_meta,
                 )
                 datasets.append(dataset)
             dataset = self.concat_datasets(datasets)
@@ -272,9 +316,9 @@ def load_dataset(
             Default: 'first_exhausted'.
         shuffle_buffer_size: Buffer size for shuffling in streaming mode. Larger values
             provide better randomization but use more memory. Default: 1000.
-        use_hf: Force using HuggingFace Hub (True) or ModelScope (False). If None,
-            it is controlled by the environment variable `USE_HF`, which defaults to '0'.
-            Default: None.
+        use_hf: Force using HuggingFace Hub (True) or ModelScope (False). If None (default),
+            the dataset load follows the read cascade CSGHub -> MSHub -> HFHub(hf-mirror)
+            regardless of `USE_HF`. Default: None.
         hub_token: Authentication token for accessing private datasets on the hub. Default: None.
         strict: If True, raise exceptions when encountering malformed data rows.
             If False, skip invalid rows with warnings. Default: False.
@@ -320,20 +364,30 @@ def load_dataset(
     train_datasets = []
     val_datasets = []
 
+    # `use_hf=None` enables the cascade CSGHub -> MSHub -> HFHub(hf-mirror) at load time
+    # instead of forcing a single backend via the legacy `USE_HF` env var.
     use_hf_default = use_hf
-    if use_hf_default is None:
-        use_hf_default = True if use_hf_hub() else False
     for dataset in datasets:
         dataset_syntax = DatasetSyntax.parse(dataset)
-        use_hf = dataset_syntax.use_hf or use_hf_default
+        if dataset_syntax.use_hf is not None:
+            use_hf = dataset_syntax.use_hf
+        else:
+            use_hf = use_hf_default
         # compat dataset_name
         if dataset_syntax.dataset in DATASET_MAPPING:
             dataset_meta = DATASET_MAPPING[dataset_syntax.dataset]
             if dataset_syntax.use_hf is None and dataset_meta.dataset_path is not None:
                 dataset_syntax.dataset = dataset_meta.dataset_path
                 dataset_syntax.dataset_type = 'path'
+            elif use_hf is True:
+                dataset_syntax.dataset = dataset_meta.hf_dataset_id or dataset_syntax.dataset
+            elif use_hf is False:
+                dataset_syntax.dataset = dataset_meta.ms_dataset_id or dataset_syntax.dataset
             else:
-                dataset_syntax.dataset = dataset_meta.hf_dataset_id if use_hf else dataset_meta.ms_dataset_id
+                # Cascade: keep a canonical id (prefer HF/CSG-style) and let `_load_repo_dataset`
+                # pick per-backend ids from `dataset_meta`.
+                dataset_syntax.dataset = (
+                    dataset_meta.hf_dataset_id or dataset_meta.ms_dataset_id or dataset_syntax.dataset)
         else:
             dataset_meta = dataset_syntax.get_dataset_meta(use_hf)
         loader = dataset_meta.loader(

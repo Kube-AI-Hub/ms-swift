@@ -133,7 +133,9 @@ class DataArguments:
             'interleave_prob': self.interleave_prob,
             'stopping_strategy': self.stopping_strategy,
             'shuffle_buffer_size': self.shuffle_buffer_size,
-            'use_hf': self.use_hf,
+            # Pass None when `--use_hf` was not explicitly enabled so that `load_dataset`
+            # uses the cascade CSGHub -> MSHub -> HFHub(hf-mirror) instead of forcing MSHub.
+            'use_hf': True if self.use_hf else None,
             'hub_token': self.hub_token,
             'download_mode': self.download_mode,
             'columns': self.columns,

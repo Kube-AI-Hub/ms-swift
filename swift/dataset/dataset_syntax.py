@@ -78,14 +78,19 @@ class DatasetSyntax:
             dataset_sample = int(dataset_sample)
         return cls(dataset.strip(), subsets or [], dataset_sample, use_hf)
 
-    def get_dataset_meta(self, use_hf: bool):
+    def get_dataset_meta(self, use_hf: Optional[bool]):
         dataset_meta_mapping = self._get_dataset_meta_mapping()
         dataset_type = self.dataset_type
         if dataset_type == 'path':
             dataset_meta = dataset_meta_mapping.get((dataset_type, self.dataset))
+        elif os.path.isdir(self.dataset):
+            dataset_meta = dataset_meta_mapping.get(('repo', self.dataset))
+        elif use_hf is None:
+            # Cascade lookup: try both backends' registries.
+            dataset_meta = (
+                dataset_meta_mapping.get(('hf', self.dataset)) or dataset_meta_mapping.get(('ms', self.dataset)))
         else:
-            dataset_type = 'repo' if os.path.isdir(self.dataset) else {True: 'hf', False: 'ms'}[use_hf]
-            dataset_meta = dataset_meta_mapping.get((dataset_type, self.dataset))
+            dataset_meta = dataset_meta_mapping.get(({True: 'hf', False: 'ms'}[use_hf], self.dataset))
         return dataset_meta or self._get_matched_dataset_meta(dataset_meta_mapping) or DatasetMeta()
 
     @staticmethod

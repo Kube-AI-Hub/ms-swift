@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from copy import copy
 from functools import partial
 from inspect import Parameter, Signature, signature
-from modelscope import snapshot_download
+from swift.utils import safe_snapshot_download
 from peft.utils import CONFIG_NAME
 from peft.utils.other import SAFETENSORS_WEIGHTS_NAME, WEIGHTS_NAME
 from torch import nn
@@ -324,7 +324,7 @@ class SwiftModel(nn.Module):
         adapters = {}
         model_dir = model_id
         if not os.path.exists(model_dir):
-            model_dir = snapshot_download(model_dir, revision=revision)
+            model_dir = safe_snapshot_download(model_dir, revision=revision)
         if os.path.isfile(model_dir):
             raise ValueError(f'Please pass in a local dir or a model id, not a local file: {model_dir}')
         extra_state_keys = kwargs.pop('extra_state_keys', None)
@@ -873,7 +873,7 @@ class Swift:
             The model wrapped by SwiftModel or PeftModel.
         """
         if not os.path.exists(model_id):
-            model_id = snapshot_download(model_id, revision=revision)
+            model_id = safe_snapshot_download(model_id, revision=revision)
         is_peft_model = False
         if os.path.exists(os.path.join(model_id, CONFIG_NAME)):
             with open(os.path.join(model_id, CONFIG_NAME), 'r', encoding='utf-8') as f:

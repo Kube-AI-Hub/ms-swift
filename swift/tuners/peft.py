@@ -8,7 +8,7 @@ import torch.nn
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from functools import partial, reduce
-from modelscope import snapshot_download
+from swift.utils import safe_snapshot_download
 from peft import (AdaLoraConfig, BOFTConfig, BOFTModel, LoftQConfig, LoHaConfig, LoKrConfig, LoraModel, OFTConfig,
                   PeftConfig, PeftModel, PeftModelForCausalLM, PeftModelForSeq2SeqLM,
                   PeftModelForSequenceClassification, PeftModelForTokenClassification, PrefixTuningConfig,
@@ -417,7 +417,7 @@ def get_wrapped_class(module_class):
         @classmethod
         def from_pretrained(cls, model, model_id, *args, revision: Optional[str] = None, **kwargs):
             if not os.path.exists(model_id):
-                model_id = snapshot_download(model_id, revision=revision)
+                model_id = safe_snapshot_download(model_id, revision=revision)
             return module_class.from_pretrained(model, model_id, *args, **kwargs)
 
     PeftWrapper.__name__ = module_class.__name__

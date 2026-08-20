@@ -15,7 +15,7 @@ from transformers import trainer
 from transformers.utils import strtobool
 from typing import List, Literal, Optional, Union
 
-from swift.utils import get_logger, ms_logger_context, use_hf_hub
+from swift.utils import get_logger, ms_logger_context
 
 logger = get_logger()
 
@@ -456,7 +456,426 @@ class HFHub(HubOperation):
             model_id_or_path, repo_type='model', revision=revision, ignore_patterns=ignore_patterns, **kwargs)
 
 
+class CSGHub(HubOperation):
+    """CSGHub backend backed by `pycsghub`.
+
+    Used as:
+    - the first tier of all read operations (model download, dataset load), and
+    - the single backend for all write operations (push_to_hub, create_model_repo, login)
+      regardless of the legacy `USE_HF` environment variable.
+
+    Endpoint resolution prefers `HF_ENDPOINT` (the same env var used by pycsghub) and
+    falls back to the public CSGHub host. Tokens are taken from `CSGHUB_TOKEN` /
+    `HF_TOKEN` / `ACCESS_TOKEN`, in that order.
+    """
+
+    DEFAULT_ENDPOINT = 'https://hub.opencsg.com/hf'
+
+    @classmethod
+    def _resolve_endpoint(cls, endpoint: Optional[str] = None) -> str:
+        if endpoint:
+            return endpoint
+        env_endpoint = os.environ.get('HF_ENDPOINT')
+        if env_endpoint and env_endpoint not in ('https://huggingface.co', 'https://huggingface.co/',
+                                                 'https://hf-mirror.com', 'https://hf-mirror.com/'):
+            return env_endpoint
+        return cls.DEFAULT_ENDPOINT
+
+    @classmethod
+    def _resolve_token(cls, token: Optional[str] = None) -> Optional[str]:
+        return (token or os.environ.get('CSGHUB_TOKEN') or os.environ.get('HF_TOKEN')
+                or os.environ.get('ACCESS_TOKEN'))
+
+    @classmethod
+    def try_login(cls, token: Optional[str] = None) -> bool:
+        return bool(cls._resolve_token(token))
+
+    @classmethod
+    def download_model(cls,
+                       model_id_or_path: Optional[str] = None,
+                       revision: Optional[str] = None,
+                       ignore_patterns: Optional[List[str]] = None,
+                       token: Optional[str] = None,
+                       endpoint: Optional[str] = None,
+                       cache_dir: Optional[str] = None,
+                       **kwargs):
+        from pycsghub.snapshot_download import snapshot_download as _csg_download
+        endpoint = cls._resolve_endpoint(endpoint)
+        token = cls._resolve_token(token)
+        if cache_dir is None:
+            cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
+        # `pycsghub.utils.get_file_download_url` calls `urllib.parse.quote(revision)`
+        # which raises `quote_from_bytes() expected bytes` when revision is None.
+        if revision is None or revision == 'master':
+            revision = 'main'
+        logger.info(f'Downloading the model from CSGHub, model_id: {model_id_or_path}, endpoint: {endpoint}')
+        return _csg_download(
+            model_id_or_path,
+            revision=revision,
+            ignore_patterns=ignore_patterns,
+            token=token,
+            endpoint=endpoint,
+            cache_dir=cache_dir,
+            **kwargs)
+
+    @classmethod
+    def load_dataset(cls,
+                     dataset_id: str,
+                     subset_name: str,
+                     split: str,
+                     streaming: bool = False,
+                     revision: Optional[str] = None,
+                     download_mode: Literal['force_redownload', 'reuse_dataset_if_exists'] = 'reuse_dataset_if_exists',
+                     token: Optional[str] = None,
+                     endpoint: Optional[str] = None,
+                     cache_dir: Optional[str] = None,
+                     **kwargs):
+        from datasets import load_dataset as hf_load_dataset
+        from pycsghub.snapshot_download import snapshot_download as _csg_download
+        endpoint = cls._resolve_endpoint(endpoint)
+        token = cls._resolve_token(token)
+        if cache_dir is None:
+            cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
+        if revision is None or revision == 'master':
+            revision = 'main'
+        logger.info(f'Loading the dataset from CSGHub, dataset_id: {dataset_id}, endpoint: {endpoint}')
+        local_dir = _csg_download(
+            dataset_id,
+            repo_type='dataset',
+            revision=revision,
+            token=token,
+            endpoint=endpoint,
+            cache_dir=cache_dir)
+        return hf_load_dataset(
+            local_dir,
+            name=subset_name,
+            split=split,
+            streaming=streaming,
+            download_mode=download_mode,
+            trust_remote_code=True)
+
+    @classmethod
+    def create_model_repo(cls, repo_id: str, token: Optional[str] = None, private: bool = False) -> str:
+        from pycsghub.repository import Repository
+        endpoint = cls._resolve_endpoint()
+        token = cls._resolve_token(token)
+        if not token:
+            raise ValueError(
+                'Please specify a token via `--hub_token` or `CSGHUB_TOKEN`/`HF_TOKEN` environment variables')
+        repo = Repository(
+            repo_id=repo_id,
+            upload_path='',
+            endpoint=endpoint,
+            token=token,
+            repo_type='model',
+            auto_create=True,
+        )
+        # Create repo only; an empty upload_path would fail in upload(), so we trigger creation directly.
+        repo_exist, _ = repo.repo_exists()
+        if not repo_exist:
+            response = repo.create_new_repo()
+            if response.status_code != 200:
+                raise ValueError(f'fail to create repo {repo_id}: status={response.status_code}, body={response.text}')
+        return repo_id
+
+    @classmethod
+    def push_to_hub(cls,
+                    repo_id: str,
+                    folder_path: Union[str, Path],
+                    path_in_repo: Optional[str] = None,
+                    commit_message: Optional[str] = None,
+                    commit_description: Optional[str] = None,
+                    token: Optional[Union[str, bool]] = None,
+                    private: bool = False,
+                    revision: Optional[str] = 'main',
+                    ignore_patterns: Optional[Union[List[str], str]] = None,
+                    **kwargs):
+        from pycsghub.repository import Repository
+        endpoint = cls._resolve_endpoint()
+        token = cls._resolve_token(token if isinstance(token, str) else None)
+        if not token:
+            raise ValueError(
+                'Please specify a token via `--hub_token` or `CSGHUB_TOKEN`/`HF_TOKEN` environment variables')
+        if revision is None or revision == 'master':
+            revision = 'main'
+        message = commit_message or 'Upload folder using ms-swift'
+        if commit_description:
+            message = message + '\n' + commit_description
+        logger.info(f'Pushing folder to CSGHub, repo_id: {repo_id}, endpoint: {endpoint}, revision: {revision}')
+        repo = Repository(
+            repo_id=repo_id,
+            upload_path=str(folder_path),
+            path_in_repo=path_in_repo or '',
+            branch_name=revision,
+            token=token,
+            endpoint=endpoint,
+            repo_type='model',
+            auto_create=True,
+            commit_message=message,
+            delete_patterns=ignore_patterns if isinstance(ignore_patterns, (list, str)) else None,
+        )
+        repo.upload()
+
+    @classmethod
+    def _build_create_repo_shim(cls):
+
+        def _csg_create_repo(repo_id, *, token=None, private=False, **kwargs):
+            cls.create_model_repo(repo_id, token=token, private=private)
+            return RepoUrl(url=repo_id)
+
+        return _csg_create_repo
+
+    @classmethod
+    def _build_upload_folder_shim(cls):
+
+        def _csg_upload_folder(*,
+                               repo_id,
+                               folder_path,
+                               path_in_repo=None,
+                               commit_message=None,
+                               commit_description=None,
+                               token=None,
+                               revision=None,
+                               ignore_patterns=None,
+                               **kwargs):
+            cls.push_to_hub(
+                repo_id,
+                folder_path,
+                path_in_repo=path_in_repo,
+                commit_message=commit_message,
+                commit_description=commit_description,
+                token=token,
+                revision=revision,
+                ignore_patterns=ignore_patterns)
+            from modelscope.utils.repo_utils import CommitInfo
+            return CommitInfo(
+                commit_url=f'{cls._resolve_endpoint()}/models/{repo_id}',
+                commit_message=commit_message,
+                commit_description=commit_description,
+                oid=None,
+            )
+
+        return _csg_upload_folder
+
+    @classmethod
+    @contextmanager
+    def patch_hub(cls):
+        hub_create_repo = huggingface_hub.create_repo
+        hub_upload_folder = huggingface_hub.upload_folder
+        trainer_create_repo = getattr(trainer, 'create_repo', None)
+        trainer_upload_folder = getattr(trainer, 'upload_folder', None)
+
+        create_repo_shim = cls._build_create_repo_shim()
+        upload_folder_shim = cls._build_upload_folder_shim()
+
+        huggingface_hub.create_repo = create_repo_shim
+        huggingface_hub.upload_folder = upload_folder_shim
+        trainer.create_repo = create_repo_shim
+        trainer.upload_folder = upload_folder_shim
+        try:
+            yield
+        finally:
+            huggingface_hub.create_repo = hub_create_repo
+            huggingface_hub.upload_folder = hub_upload_folder
+            trainer.create_repo = trainer_create_repo
+            trainer.upload_folder = trainer_upload_folder
+
+
+_HF_MIRROR_ENDPOINT = 'https://hf-mirror.com'
+
+# Env vars that `huggingface_hub` and `datasets` auto-read for authentication.
+# `HF_TOKEN` in our deployment carries a CSGHub token, so we must hide it from
+# MSHub / HFHub fallbacks to avoid leaking it to the wrong backend.
+_HF_TOKEN_ENV_VARS = ('HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN', 'HUGGINGFACE_HUB_TOKEN')
+
+
+@contextmanager
+def _hide_hf_token_env():
+    """Temporarily remove HF token env vars so non-CSGHub backends see no token."""
+    saved = {k: os.environ.pop(k) for k in _HF_TOKEN_ENV_VARS if k in os.environ}
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            os.environ[k] = v
+
+
+def cascading_download_model(model_id_or_path: str,
+                             revision: Optional[str] = None,
+                             ignore_patterns: Optional[List[str]] = None,
+                             token: Optional[str] = None,
+                             cache_dir: Optional[str] = None,
+                             **kwargs) -> str:
+    """Download a model with the unified read priority: CSGHub -> MSHub -> HFHub(hf-mirror).
+
+    Each tier is attempted in order; on failure the next tier is tried. If all tiers
+    fail a `RuntimeError` is raised, chained from the last underlying exception.
+    """
+    last_exc: Optional[BaseException] = None
+    model_dir = None
+
+    try:
+        model_dir = CSGHub.download_model(
+            model_id_or_path,
+            revision=revision,
+            ignore_patterns=ignore_patterns,
+            token=token,
+            cache_dir=cache_dir,
+            **kwargs)
+    except Exception as e:
+        last_exc = e
+        logger.warning(f'CSGHub download failed: {e}, falling back to MSHub')
+
+    if model_dir is None:
+        # `HF_TOKEN` in our deployment is a CSGHub token; do not forward it to
+        # ModelScope. `MODELSCOPE_API_TOKEN` (read by `MSHub.try_login`) is the
+        # only credential MSHub should see.
+        with _hide_hf_token_env():
+            try:
+                model_dir = MSHub.download_model(
+                    model_id_or_path,
+                    revision,
+                    ignore_patterns,
+                    token=None,
+                    cache_dir=cache_dir,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'MSHub download failed: {e}, falling back to HFHub (hf-mirror.com)')
+
+    if model_dir is None:
+        _orig_endpoint = os.environ.get('HF_ENDPOINT')
+        os.environ['HF_ENDPOINT'] = _HF_MIRROR_ENDPOINT
+        # Same rationale: hide CSGHub `HF_TOKEN` from `huggingface_hub`, which
+        # auto-reads it from the env when no explicit token is provided.
+        with _hide_hf_token_env():
+            try:
+                model_dir = HFHub.download_model(
+                    model_id_or_path,
+                    revision,
+                    ignore_patterns,
+                    token=None,
+                    cache_dir=cache_dir,
+                    endpoint=_HF_MIRROR_ENDPOINT,
+                    **kwargs)
+            except Exception as e:
+                raise RuntimeError(
+                    f'All download attempts failed (CSGHub, MSHub, HFHub). Last error: {e}') from last_exc
+            finally:
+                if _orig_endpoint is None:
+                    os.environ.pop('HF_ENDPOINT', None)
+                else:
+                    os.environ['HF_ENDPOINT'] = _orig_endpoint
+
+    return model_dir
+
+
+def cascading_load_dataset(csg_dataset_id: Optional[str],
+                           hf_dataset_id: Optional[str],
+                           ms_dataset_id: Optional[str],
+                           subset_name: str,
+                           split: str,
+                           *,
+                           hf_revision: Optional[str] = None,
+                           ms_revision: Optional[str] = None,
+                           streaming: bool = False,
+                           download_mode: Literal['force_redownload',
+                                                  'reuse_dataset_if_exists'] = 'reuse_dataset_if_exists',
+                           token: Optional[str] = None,
+                           num_proc: Optional[int] = None,
+                           **kwargs):
+    """Load a dataset with the unified read priority: CSGHub -> MSHub -> HFHub(hf-mirror).
+
+    Each tier is attempted in order with the id/revision applicable to that tier; on
+    failure the next tier is tried. Raises `RuntimeError` if all tiers fail.
+    """
+    last_exc: Optional[BaseException] = None
+    dataset = None
+
+    csg_id = csg_dataset_id or hf_dataset_id or ms_dataset_id
+    if csg_id is not None:
+        try:
+            dataset = CSGHub.load_dataset(
+                csg_id,
+                subset_name,
+                split,
+                streaming=streaming,
+                revision=hf_revision,
+                download_mode=download_mode,
+                token=token,
+                **kwargs)
+        except Exception as e:
+            last_exc = e
+            logger.warning(f'CSGHub dataset load failed: {e}, falling back to MSHub')
+
+    if dataset is None and ms_dataset_id is not None:
+        # Hide CSGHub `HF_TOKEN` from ModelScope; only `MODELSCOPE_API_TOKEN`
+        # should be used for MS authentication.
+        with _hide_hf_token_env():
+            try:
+                dataset = MSHub.load_dataset(
+                    ms_dataset_id,
+                    subset_name,
+                    split,
+                    streaming=streaming,
+                    revision=ms_revision,
+                    download_mode=download_mode,
+                    token=None,
+                    num_proc=num_proc,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'MSHub dataset load failed: {e}, falling back to HFHub (hf-mirror.com)')
+
+    if dataset is None and hf_dataset_id is not None:
+        _orig_endpoint = os.environ.get('HF_ENDPOINT')
+        os.environ['HF_ENDPOINT'] = _HF_MIRROR_ENDPOINT
+        # `datasets.load_dataset` auto-reads `HF_TOKEN` from env; remove it so
+        # the CSGHub token is not sent to hf-mirror.com.
+        with _hide_hf_token_env():
+            try:
+                dataset = HFHub.load_dataset(
+                    hf_dataset_id,
+                    subset_name,
+                    split,
+                    streaming=streaming,
+                    revision=hf_revision,
+                    download_mode=download_mode,
+                    num_proc=num_proc,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+            finally:
+                if _orig_endpoint is None:
+                    os.environ.pop('HF_ENDPOINT', None)
+                else:
+                    os.environ['HF_ENDPOINT'] = _orig_endpoint
+
+    if dataset is None:
+        raise RuntimeError(
+            f'All dataset load attempts failed (CSGHub, MSHub, HFHub). Last error: {last_exc}') from last_exc
+    return dataset
+
+
+def get_write_hub():
+    """Return the hub used for write operations (push_to_hub, create_model_repo, login).
+
+    Always returns CSGHub regardless of the legacy `USE_HF` environment variable.
+    """
+    return CSGHub
+
+
 def get_hub(use_hf: Optional[bool] = None):
+    """Return a single hub backend.
+
+    - `use_hf=True` -> `HFHub`
+    - `use_hf=False` -> `MSHub`
+    - `use_hf=None` -> `CSGHub` (default; used for write operations)
+
+    For read-side cascading behavior prefer `cascading_download_model` /
+    `cascading_load_dataset` instead of `get_hub(...).download_model(...)` /
+    `get_hub(...).load_dataset(...)`.
+    """
     if use_hf is None:
-        use_hf = True if use_hf_hub() else False
+        return CSGHub
     return {True: HFHub, False: MSHub}[use_hf]
