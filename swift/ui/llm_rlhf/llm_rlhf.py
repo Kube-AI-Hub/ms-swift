@@ -4,7 +4,7 @@ from functools import partial
 from typing import Dict, Type
 
 from swift.arguments import get_supported_tuners
-from swift.utils import get_device_count, get_logger
+from swift.utils import get_ui_device_info, get_logger
 from ..base import BaseUI
 from ..llm_train import LLMTrain
 from .advanced import RLHFAdvanced
@@ -231,10 +231,7 @@ class LLMRLHF(LLMTrain):
     @classmethod
     def do_build_ui(cls, base_tab: Type['BaseUI']):
         with gr.TabItem(elem_id='llm_rlhf', label=''):
-            default_device = 'cpu'
-            device_count = get_device_count()
-            if device_count > 0:
-                default_device = '0'
+            device_choices, default_device = get_ui_device_info()
             with gr.Blocks():
                 RLHFModel.build_ui(base_tab)
                 RLHFDataset.build_ui(base_tab)
@@ -249,7 +246,7 @@ class LLMRLHF(LLMTrain):
                         gr.Dropdown(
                             elem_id='gpu_id',
                             multiselect=True,
-                            choices=[str(i) for i in range(device_count)] + ['cpu'],
+                            choices=device_choices,
                             value=default_device,
                             scale=4)
                         gr.Checkbox(elem_id='use_ddp', value=False, scale=4)

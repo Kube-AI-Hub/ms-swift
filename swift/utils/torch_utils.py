@@ -6,6 +6,16 @@ import os
 import pickle
 import time
 import torch
+# For Cambricon MLU: import torch first, then torch_mlu
+try:
+    import torch_mlu  # noqa: F401
+except ImportError:
+    pass
+# For Huawei Ascend NPU: import torch first, then torch_npu
+try:
+    import torch_npu  # noqa: F401
+except ImportError:
+    pass
 import torch.distributed as dist
 import torch.nn.functional as F
 import uuid
@@ -64,6 +74,8 @@ def _find_local_mac() -> str:
 def synchronize(device: Union[torch.device, str, int, None] = None):
     if is_torch_npu_available():
         torch.npu.synchronize(device)
+    elif is_torch_mlu_available():
+        torch.mlu.synchronize(device)
     elif is_torch_cuda_available():
         torch.cuda.synchronize(device)
     else:
@@ -123,6 +135,8 @@ def get_device(local_rank: Optional[Union[str, int]] = None) -> str:
     local_rank = str(local_rank)
     if is_torch_npu_available():
         device = 'npu:{}'.format(local_rank)
+    elif is_torch_mlu_available():
+        device = 'mlu:{}'.format(local_rank)
     elif is_torch_mps_available():
         device = 'mps:{}'.format(local_rank)
     elif is_torch_cuda_available():
@@ -136,6 +150,8 @@ def get_device(local_rank: Optional[Union[str, int]] = None) -> str:
 def get_current_device():
     if is_torch_npu_available():
         current_device = torch.npu.current_device()
+    elif is_torch_mlu_available():
+        current_device = torch.mlu.current_device()
     elif is_torch_cuda_available():
         current_device = torch.cuda.current_device()
     elif is_torch_mps_available():
@@ -150,6 +166,8 @@ def get_torch_device():
         return torch.cuda
     elif is_torch_npu_available():
         return torch.npu
+    elif is_torch_mlu_available():
+        return torch.mlu
     elif is_torch_mps_available():
         return torch.mps
     else:
@@ -161,8 +179,18 @@ def set_device(local_rank: Optional[Union[str, int]] = None):
         local_rank = max(0, get_dist_setting()[1])
     if is_torch_npu_available():
         torch.npu.set_device(local_rank)
+    elif is_torch_mlu_available():
+        torch.mlu.set_device(local_rank)
     elif is_torch_cuda_available():
         torch.cuda.set_device(local_rank)
+
+
+def is_torch_mlu_available() -> bool:
+    try:
+        import torch_mlu  # noqa: F401
+    except ImportError:
+        return False
+    return getattr(torch, 'mlu', None) is not None and torch.mlu.is_available()
 
 
 def get_device_count() -> int:
@@ -170,8 +198,20 @@ def get_device_count() -> int:
         return torch.npu.device_count()
     elif is_torch_cuda_available():
         return torch.cuda.device_count()
+    elif is_torch_mlu_available():
+        return torch.mlu.device_count()
     else:
         return 0
+
+
+def get_ui_device_info():
+    device_count = get_device_count()
+    if device_count > 0:
+        return [str(i) for i in range(device_count)] + ['cpu'], '0'
+    elif is_torch_mps_available():
+        return ['mps', 'cpu'], 'mps'
+    else:
+        return ['cpu'], 'cpu'
 
 
 def is_torch_rocm() -> bool:
@@ -247,6 +287,8 @@ def get_physical_device_count() -> int:
 def empty_cache():
     if is_torch_npu_available():
         torch.npu.empty_cache()
+    elif is_torch_mlu_available():
+        torch.mlu.empty_cache()
     elif is_torch_mps_available():
         torch.mps.empty_cache()
     elif is_torch_cuda_available():
@@ -341,6 +383,8 @@ def init_process_group(backend: Optional[str] = None, timeout: int = 18000000):
     if backend is None:
         if is_torch_npu_available():
             backend = 'hccl'
+        elif is_torch_mlu_available():
+            backend = 'cncl'
         elif torch.cuda.is_available():
             backend = 'nccl'
         else:
