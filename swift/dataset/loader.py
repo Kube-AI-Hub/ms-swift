@@ -19,6 +19,22 @@ from .register import DATASET_MAPPING, DatasetMeta, SubsetDataset
 logger = get_logger()
 
 
+def _is_registered_dataset_id(dataset_id: str, dataset_meta: Optional[DatasetMeta]) -> bool:
+    """Return True when `dataset_id` is a built-in registry alias, not an ad-hoc CSGHub repo."""
+    if dataset_id in DATASET_MAPPING:
+        return True
+    if dataset_meta is None:
+        return False
+    registered_ids = {
+        dataset_meta.hf_dataset_id,
+        dataset_meta.ms_dataset_id,
+        dataset_meta.dataset_name,
+        dataset_meta.dataset_path,
+    }
+    registered_ids.discard(None)
+    return dataset_id in registered_ids
+
+
 class DatasetLoader(BaseDatasetLoader):
 
     def __init__(
@@ -106,8 +122,13 @@ class DatasetLoader(BaseDatasetLoader):
 
         # Resolve per-backend ids and revisions for the cascade case.
         meta = dataset_meta
-        hf_id = (meta and meta.hf_dataset_id) or dataset_id
-        ms_id = (meta and meta.ms_dataset_id) or dataset_id
+        if meta and _is_registered_dataset_id(dataset_id, meta):
+            hf_id = meta.hf_dataset_id or dataset_id
+            ms_id = meta.ms_dataset_id or dataset_id
+        else:
+            # Honor explicit CSGHub repo ids such as `admin/self-cognition` instead of
+            # remapping by dataset-name suffix to upstream hf/ms registry ids.
+            hf_id = ms_id = dataset_id
         hf_rev = (meta and meta.hf_revision) or revision
         ms_rev = (meta and meta.ms_revision) or revision
 
@@ -140,7 +161,7 @@ class DatasetLoader(BaseDatasetLoader):
                                 num_proc=self.num_proc)
                         else:
                             dataset = cascading_load_dataset(
-                                csg_dataset_id=hf_id,
+                                csg_dataset_id=dataset_id,
                                 hf_dataset_id=hf_id,
                                 ms_dataset_id=ms_id,
                                 subset_name=subset.subset,

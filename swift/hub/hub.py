@@ -491,6 +491,14 @@ class CSGHub(HubOperation):
         return bool(cls._resolve_token(token))
 
     @classmethod
+    def _snapshot_local_dir(cls, cache_dir: str, repo_id: str, repo_type: str, revision: str) -> str:
+        safe_repo = repo_id.replace('..', '_').replace('/', '--')
+        safe_revision = revision.replace('..', '_').replace('/', '--')
+        local_dir = Path(cache_dir) / 'snapshots' / repo_type / safe_repo / safe_revision
+        local_dir.mkdir(parents=True, exist_ok=True)
+        return str(local_dir)
+
+    @classmethod
     def download_model(cls,
                        model_id_or_path: Optional[str] = None,
                        revision: Optional[str] = None,
@@ -538,6 +546,7 @@ class CSGHub(HubOperation):
             cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
         if revision is None or revision == 'master':
             revision = 'main'
+        snapshot_dir = cls._snapshot_local_dir(cache_dir, dataset_id, 'dataset', revision)
         logger.info(f'Loading the dataset from CSGHub, dataset_id: {dataset_id}, endpoint: {endpoint}')
         local_dir = _csg_download(
             dataset_id,
@@ -545,13 +554,45 @@ class CSGHub(HubOperation):
             revision=revision,
             token=token,
             endpoint=endpoint,
-            cache_dir=cache_dir)
+            cache_dir=cache_dir,
+            local_dir=snapshot_dir)
+
+        data_files = []
+        builder = None
+        for suffix, candidate_builder in (
+            ('.parquet', 'parquet'),
+            ('.jsonl', 'json'),
+            ('.json', 'json'),
+            ('.csv', 'csv'),
+            ('.txt', 'text'),
+        ):
+            matches = [
+                str(path)
+                for path in Path(local_dir).rglob(f'*{suffix}')
+                if path.name not in {'dataset_info.json', 'dataset_infos.json'}
+            ]
+            if matches:
+                data_files = matches
+                builder = candidate_builder
+                break
+
+        num_proc = kwargs.pop('num_proc', None)
+        if builder is not None:
+            return hf_load_dataset(
+                builder,
+                data_files=data_files,
+                split=split,
+                streaming=streaming,
+                download_mode=download_mode,
+                num_proc=num_proc)
+
         return hf_load_dataset(
             local_dir,
             name=subset_name,
             split=split,
             streaming=streaming,
             download_mode=download_mode,
+            num_proc=num_proc,
             trust_remote_code=True)
 
     @classmethod
