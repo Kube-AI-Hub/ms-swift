@@ -44,7 +44,10 @@ def run_command_in_background_with_popen(command, all_envs, log_file):
     env = deepcopy(os.environ)
     if len(all_envs) > 0:
         for k, v in all_envs.items():
-            env[k] = v
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
     daemon_kwargs = {}
     if sys.platform == 'win32':
         from subprocess import CREATE_NO_WINDOW, DETACHED_PROCESS

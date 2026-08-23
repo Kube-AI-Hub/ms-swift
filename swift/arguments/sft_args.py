@@ -196,6 +196,11 @@ class SftArguments(SwanlabArguments, TunerArguments, BaseArguments, Seq2SeqTrain
                                  f'Please use one of: {supported_impls_str}.')
 
     def __post_init__(self) -> None:
+        if self.use_cpu:
+            # torch_npu makes NPU the default checkpoint device. With CPU-only
+            # tensors this otherwise enters NPU autocast during backward.
+            from torch.utils.checkpoint import DefaultDeviceType
+            DefaultDeviceType.set_device_type('cpu')
         if self.resume_from_checkpoint:
             self.resume_from_checkpoint = to_abspath(self.resume_from_checkpoint, True)
             # The non-resume_only_model will have its weights loaded in the trainer.

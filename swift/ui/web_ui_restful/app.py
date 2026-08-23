@@ -315,7 +315,9 @@ def _timestamp() -> str:
 # parent Web-UI's CUDA/ASCEND/MLU devices when the user explicitly selects CPU.
 _CPU_CLEAR_ENV = {
     'CUDA_VISIBLE_DEVICES': '',
-    'ASCEND_RT_VISIBLE_DEVICES': '',
+    # torch_npu rejects an empty ASCEND_RT_VISIBLE_DEVICES value. None tells
+    # the subprocess launcher to remove an inherited mask instead.
+    'ASCEND_RT_VISIBLE_DEVICES': None,
     'MLU_VISIBLE_DEVICES': '',
 }
 
@@ -324,7 +326,7 @@ _CPU_CLEAR_ENV = {
 _DEVICE_INFO_CACHE: Optional[tuple] = None
 
 
-def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, str]:
+def _build_gpu_env(gpu_ids: Optional[List[str]]) -> Dict[str, Optional[str]]:
     if not gpu_ids:
         return {}
     gpu_ids = [g for g in gpu_ids if g]
