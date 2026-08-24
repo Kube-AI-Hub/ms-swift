@@ -620,6 +620,20 @@ class CSGHub(HubOperation):
         return repo_id
 
     @classmethod
+    def _ensure_git_identity(cls) -> None:
+        """pycsghub.Repository.upload() runs `git commit` and needs user.name/email."""
+        import subprocess
+
+        def _has(key: str) -> bool:
+            result = subprocess.run(['git', 'config', '--global', '--get', key], capture_output=True, text=True)
+            return result.returncode == 0 and bool(result.stdout.strip())
+
+        if not _has('user.email'):
+            subprocess.run(['git', 'config', '--global', 'user.email', 'csghub@local'], check=False)
+        if not _has('user.name'):
+            subprocess.run(['git', 'config', '--global', 'user.name', 'csghub'], check=False)
+
+    @classmethod
     def push_to_hub(cls,
                     repo_id: str,
                     folder_path: Union[str, Path],
@@ -642,7 +656,10 @@ class CSGHub(HubOperation):
         message = commit_message or 'Upload folder using ms-swift'
         if commit_description:
             message = message + '\n' + commit_description
-        logger.info(f'Pushing folder to CSGHub, repo_id: {repo_id}, endpoint: {endpoint}, revision: {revision}')
+        logger.info(
+            f'Pushing folder to CSGHub, repo_id: {repo_id}, endpoint: {endpoint}, '
+            f'revision: {revision}, commit_message: {message}')
+        # Current pycsghub.Repository does not accept commit_message/delete_patterns.
         repo = Repository(
             repo_id=repo_id,
             upload_path=str(folder_path),
@@ -652,9 +669,8 @@ class CSGHub(HubOperation):
             endpoint=endpoint,
             repo_type='model',
             auto_create=True,
-            commit_message=message,
-            delete_patterns=ignore_patterns if isinstance(ignore_patterns, (list, str)) else None,
         )
+        cls._ensure_git_identity()
         repo.upload()
 
     @classmethod
