@@ -490,6 +490,11 @@ class CSGHub(HubOperation):
     def try_login(cls, token: Optional[str] = None) -> bool:
         return bool(cls._resolve_token(token))
 
+    # pycsghub cannot take revision=None (`urllib.parse.quote` raises).
+    # CSGHub repos may use either `main` or `master` as the default branch; asking
+    # for the missing one returns 200 without `sha`/`siblings` and pycsghub asserts.
+    _DEFAULT_BRANCH_CANDIDATES = ('main', 'master')
+
     @classmethod
     def _snapshot_local_dir(cls, cache_dir: str, repo_id: str, repo_type: str, revision: str) -> str:
         safe_repo = repo_id.replace('..', '_').replace('/', '--')
@@ -497,6 +502,57 @@ class CSGHub(HubOperation):
         local_dir = Path(cache_dir) / 'snapshots' / repo_type / safe_repo / safe_revision
         local_dir.mkdir(parents=True, exist_ok=True)
         return str(local_dir)
+
+    @classmethod
+    def _native_api_root(cls, endpoint: str) -> str:
+        root = endpoint.rstrip('/')
+        for suffix in ('/hf', '/csg'):
+            if root.endswith(suffix):
+                return root[:-len(suffix)]
+        return root
+
+    @classmethod
+    def _lookup_default_branch(cls,
+                               repo_id: str,
+                               repo_type: str,
+                               token: Optional[str],
+                               endpoint: str) -> Optional[str]:
+        import requests
+        kind = 'datasets' if repo_type == 'dataset' else 'models'
+        url = f'{cls._native_api_root(endpoint)}/api/v1/{kind}/{repo_id}'
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            info = payload.get('data', payload) if isinstance(payload, dict) else {}
+            branch = str(info.get('default_branch') or info.get('DefaultBranch') or '').strip()
+            return branch or None
+        except Exception as e:
+            logger.warning(f'Failed to resolve CSGHub default branch for {repo_id}: {e}')
+            return None
+
+    @classmethod
+    def _revision_candidates(cls,
+                             revision: Optional[str],
+                             repo_id: Optional[str],
+                             repo_type: str,
+                             token: Optional[str],
+                             endpoint: str) -> List[str]:
+        if revision and revision not in cls._DEFAULT_BRANCH_CANDIDATES:
+            return [revision]
+        candidates: List[str] = []
+        if revision:
+            candidates.append(revision)
+        elif repo_id:
+            default_branch = cls._lookup_default_branch(repo_id, repo_type, token, endpoint)
+            if default_branch:
+                candidates.append(default_branch)
+        for branch in cls._DEFAULT_BRANCH_CANDIDATES:
+            if branch not in candidates:
+                candidates.append(branch)
+        return candidates
 
     @classmethod
     def download_model(cls,
@@ -512,19 +568,24 @@ class CSGHub(HubOperation):
         token = cls._resolve_token(token)
         if cache_dir is None:
             cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
-        # `pycsghub.utils.get_file_download_url` calls `urllib.parse.quote(revision)`
-        # which raises `quote_from_bytes() expected bytes` when revision is None.
-        if revision is None or revision == 'master':
-            revision = 'main'
-        logger.info(f'Downloading the model from CSGHub, model_id: {model_id_or_path}, endpoint: {endpoint}')
-        return _csg_download(
-            model_id_or_path,
-            revision=revision,
-            ignore_patterns=ignore_patterns,
-            token=token,
-            endpoint=endpoint,
-            cache_dir=cache_dir,
-            **kwargs)
+        last_exc: Optional[BaseException] = None
+        for rev in cls._revision_candidates(revision, model_id_or_path, 'model', token, endpoint):
+            try:
+                logger.info(
+                    f'Downloading the model from CSGHub, model_id: {model_id_or_path}, '
+                    f'revision: {rev}, endpoint: {endpoint}')
+                return _csg_download(
+                    model_id_or_path,
+                    revision=rev,
+                    ignore_patterns=ignore_patterns,
+                    token=token,
+                    endpoint=endpoint,
+                    cache_dir=cache_dir,
+                    **kwargs)
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'CSGHub download failed for {model_id_or_path}@{rev}: {e}')
+        raise last_exc
 
     @classmethod
     def load_dataset(cls,
@@ -544,18 +605,28 @@ class CSGHub(HubOperation):
         token = cls._resolve_token(token)
         if cache_dir is None:
             cache_dir = os.environ.get('HUGGINGFACE_HUB_CACHE', './download')
-        if revision is None or revision == 'master':
-            revision = 'main'
-        snapshot_dir = cls._snapshot_local_dir(cache_dir, dataset_id, 'dataset', revision)
-        logger.info(f'Loading the dataset from CSGHub, dataset_id: {dataset_id}, endpoint: {endpoint}')
-        local_dir = _csg_download(
-            dataset_id,
-            repo_type='dataset',
-            revision=revision,
-            token=token,
-            endpoint=endpoint,
-            cache_dir=cache_dir,
-            local_dir=snapshot_dir)
+        last_exc: Optional[BaseException] = None
+        local_dir = None
+        for rev in cls._revision_candidates(revision, dataset_id, 'dataset', token, endpoint):
+            snapshot_dir = cls._snapshot_local_dir(cache_dir, dataset_id, 'dataset', rev)
+            logger.info(
+                f'Loading the dataset from CSGHub, dataset_id: {dataset_id}, '
+                f'revision: {rev}, endpoint: {endpoint}')
+            try:
+                local_dir = _csg_download(
+                    dataset_id,
+                    repo_type='dataset',
+                    revision=rev,
+                    token=token,
+                    endpoint=endpoint,
+                    cache_dir=cache_dir,
+                    local_dir=snapshot_dir)
+                break
+            except Exception as e:
+                last_exc = e
+                logger.warning(f'CSGHub dataset snapshot failed for {dataset_id}@{rev}: {e}')
+        if local_dir is None:
+            raise last_exc
 
         data_files = []
         builder = None

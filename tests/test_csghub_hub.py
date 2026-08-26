@@ -25,6 +25,7 @@ def test_csghub_jsonl_dataset_ignores_incomplete_dataset_infos(monkeypatch, tmp_
         load_calls.append((path, kwargs))
         return 'dataset'
 
+    monkeypatch.setattr(CSGHub, '_lookup_default_branch', classmethod(lambda cls, *args, **kwargs: None))
     monkeypatch.setattr('pycsghub.snapshot_download.snapshot_download', fake_snapshot_download)
     monkeypatch.setattr('datasets.load_dataset', fake_load_dataset)
 
@@ -51,6 +52,42 @@ def test_registered_dataset_id_detection():
     assert _is_registered_dataset_id('swift/self-cognition', meta)
     assert _is_registered_dataset_id('modelscope/self-cognition', meta)
     assert not _is_registered_dataset_id('admin/self-cognition', meta)
+
+
+def test_csghub_revision_candidates_prefer_repo_default_branch(monkeypatch):
+    monkeypatch.setattr(CSGHub, '_lookup_default_branch', classmethod(lambda cls, *args, **kwargs: 'master'))
+
+    assert CSGHub._revision_candidates(None, 'admin/demo', 'model', None, 'http://csghub') == [
+        'master',
+        'main',
+    ]
+    assert CSGHub._revision_candidates('master', 'admin/demo', 'model', None, 'http://csghub') == [
+        'master',
+        'main',
+    ]
+    assert CSGHub._revision_candidates('main', 'admin/demo', 'model', None, 'http://csghub') == [
+        'main',
+        'master',
+    ]
+    assert CSGHub._revision_candidates('v1.0', 'admin/demo', 'model', None, 'http://csghub') == ['v1.0']
+
+
+def test_csghub_download_model_retries_master_when_main_has_no_sha(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_snapshot_download(repo_id, **kwargs):
+        calls.append(kwargs['revision'])
+        if kwargs['revision'] == 'main':
+            raise AssertionError('Repo info returned from server must have a revision sha.')
+        return str(tmp_path / kwargs['revision'])
+
+    monkeypatch.setattr(CSGHub, '_lookup_default_branch', classmethod(lambda cls, *args, **kwargs: None))
+    monkeypatch.setattr('pycsghub.snapshot_download.snapshot_download', fake_snapshot_download)
+
+    result = CSGHub.download_model('admin/DeepSeek-R1-Distill-Qwen-1.5B', revision=None, cache_dir=str(tmp_path))
+
+    assert calls == ['main', 'master']
+    assert result == str(tmp_path / 'master')
 
 
 def test_csghub_repo_id_not_remapped_to_registry(monkeypatch):
