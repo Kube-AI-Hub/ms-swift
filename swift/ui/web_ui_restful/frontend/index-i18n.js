@@ -24,6 +24,13 @@ window.i18n = {
     fieldTorchDtype: '训练精度',
     fieldUseLigerKernel: '使用 Liger Kernel',
     fieldGpuIds: '选择 GPU',
+    fieldNpuIds: '选择 NPU',
+    fieldMluIds: '选择 MLU',
+    gpuKindGpu: 'GPU',
+    gpuKindNpu: 'NPU',
+    gpuKindMlu: 'MLU',
+    gpuKindMps: 'MPS',
+    gpuKindCpu: 'CPU',
     fieldUseDdp: '使用 DDP',
     fieldDdpNum: 'DDP 分片数',
     fieldDeepspeed: 'DeepSpeed',
@@ -198,6 +205,13 @@ window.i18n = {
     fieldQuantNSamples: '量化样本数',
     fieldMaxLength: '最大长度',
     fieldDeviceMap: 'Device Map',
+    sectionExportHub: '写回 CSGHub 模型库',
+    fieldPushToCsghub: '推送到 CSGHub',
+    fieldExistOk: '允许覆盖已有目录',
+    hintExportHub: '勾选后将导出结果推送到 CSGHub。仓库不存在会自动创建；微调实例已注入 Token 时可留空。请使用新的命名空间/仓库名，不要覆盖基座模型。',
+    hintExportHubModelId: '格式：命名空间/仓库名，例如 admin/qwen3-lora-sft',
+    hintExportAdapters: '合并 LoRA 时填写训练产出的 checkpoint 目录',
+    exportHubModelIdRequired: '推送到 CSGHub 时必须填写模型库 ID（命名空间/仓库名）',
 
     // Eval specific
     fieldEvalBackend: '评测后端',
@@ -320,6 +334,13 @@ window.i18n = {
     fieldTorchDtype: 'Training precision',
     fieldUseLigerKernel: 'Use Liger Kernel',
     fieldGpuIds: 'Choose GPU',
+    fieldNpuIds: 'Choose NPU',
+    fieldMluIds: 'Choose MLU',
+    gpuKindGpu: 'GPU',
+    gpuKindNpu: 'NPU',
+    gpuKindMlu: 'MLU',
+    gpuKindMps: 'MPS',
+    gpuKindCpu: 'CPU',
     fieldUseDdp: 'Use DDP',
     fieldDdpNum: 'DDP sharding num',
     fieldDeepspeed: 'DeepSpeed',
@@ -494,6 +515,13 @@ window.i18n = {
     fieldQuantNSamples: 'Quant n samples',
     fieldMaxLength: 'Max length',
     fieldDeviceMap: 'Device map',
+    sectionExportHub: 'Push to CSGHub',
+    fieldPushToCsghub: 'Push to CSGHub',
+    fieldExistOk: 'Overwrite existing output dir',
+    hintExportHub: 'Push the export result to CSGHub. Missing repos are created automatically. Leave the token empty if the finetune instance already injected one. Use a new namespace/repo name; do not overwrite the base model.',
+    hintExportHubModelId: 'Format: namespace/repo, e.g. admin/qwen3-lora-sft',
+    hintExportAdapters: 'Checkpoint directory from training, required when merging LoRA',
+    exportHubModelIdRequired: 'hub_model_id (namespace/repo) is required when pushing to CSGHub',
 
     // Eval specific
     fieldEvalBackend: 'Eval backend',
@@ -638,4 +666,7 @@ window.applyI18n = function(lang) {
       }
     }
   });
+  if (typeof window.relabelGpuDeviceOptions === 'function') {
+    window.relabelGpuDeviceOptions();
+  }
 };

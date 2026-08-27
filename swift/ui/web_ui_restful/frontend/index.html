@@ -1878,6 +1878,11 @@
           <span data-i18n="fieldMergeLora">合并 LoRA</span>
         </label>
         <label>
+          <span data-i18n="fieldAdapters">Adapter 路径</span>
+          <input type="text" id="export-adapters" placeholder="/workspace/output/.../checkpoint-xx" />
+          <span class="hint" data-i18n="hintExportAdapters">合并 LoRA 时填写训练产出的 checkpoint 目录</span>
+        </label>
+        <label>
           <span data-i18n="fieldOutputDir">输出目录</span>
           <input type="text" id="export-output-dir" placeholder="export_output/" />
         </label>
@@ -1926,9 +1931,39 @@
         <span class="tag-hint" data-i18n="datasetHint">输入数据集名称或路径，按 Enter 确认</span>
       </label>
 
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="sectionExportHub">写回 CSGHub 模型库</span>
+        </div>
+        <p class="muted" style="margin:0 0 12px" data-i18n="hintExportHub">勾选后将导出结果推送到 CSGHub。仓库不存在会自动创建；微调实例已注入 Token 时可留空。请使用新的命名空间/仓库名，不要覆盖基座模型。</p>
+        <div class="form-grid form-grid-3">
+          <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+            <input type="checkbox" id="export-push-to-hub" />
+            <span data-i18n="fieldPushToCsghub">推送到 CSGHub</span>
+          </label>
+          <label>
+            <span data-i18n="fieldHubModelId">Hub 模型 ID</span>
+            <input type="text" id="export-hub-model-id" placeholder="username/model-name" autocomplete="off" />
+            <span class="hint" data-i18n="hintExportHubModelId">格式：命名空间/仓库名，例如 admin/qwen3-lora-sft</span>
+          </label>
+          <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+            <input type="checkbox" id="export-hub-private" />
+            <span data-i18n="fieldHubPrivate">私有仓库</span>
+          </label>
+          <label>
+            <span data-i18n="fieldHubToken">Hub Token</span>
+            <input type="password" id="export-hub-token" placeholder="可选" autocomplete="off" />
+          </label>
+          <label class="checkbox-label" style="align-self:flex-end;padding-bottom:10px">
+            <input type="checkbox" id="export-exist-ok" />
+            <span data-i18n="fieldExistOk">允许覆盖已有目录</span>
+          </label>
+        </div>
+      </div>
+
       <label style="margin-top:12px">
         <span data-i18n="fieldMoreParams">其他参数</span>
-        <textarea id="export-more-params" rows="3" placeholder='{"merge_lora": true}'></textarea>
+        <textarea id="export-more-params" rows="3" placeholder='{"commit_message": "merged lora export"}'></textarea>
       </label>
 
       <div class="actions" style="margin-top:16px">

@@ -47,6 +47,10 @@
     sample: ['sample', 'sample-running-tasks', 'sample-status'],
   };
 
+  let lastTrainExportHint = null;
+  const exportPrefillDone = { train: false, rlhf: false, grpo: false };
+  let exportPrefillTimer = null;
+
   // ── Tab switching ──
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -68,6 +72,7 @@
           }
         });
       }
+      if (target === 'export') prefillExportFromTrain();
     });
   });
 
@@ -476,6 +481,9 @@
       const i18n = (window.i18n && window.i18n[pageLang]) || {};
       timeEl.textContent = _progressTimeText(elapsed, remain, speed, i18n);
     }
+    if (/^train$/i.test(phase) && Number(pct) >= 100 && Number(cur) >= Number(total)) {
+      maybePrefillExportOnTrainComplete('train');
+    }
   }
 
   function parseTaskProgress(prefix, logText) {
@@ -502,6 +510,12 @@
     if (timeEl) {
       const i18n = (window.i18n && window.i18n[pageLang]) || {};
       timeEl.textContent = _progressTimeText(elapsed, remain, speed, i18n);
+    }
+    if ((prefix === 'rlhf' || prefix === 'grpo')
+        && /^train$/i.test(phase)
+        && Number(pct) >= 100
+        && Number(cur) >= Number(total)) {
+      maybePrefillExportOnTrainComplete(prefix);
     }
   }
 
@@ -733,9 +747,10 @@
     },
     export: {
       model: 'export-model', model_type: 'export-model-type', template: 'export-template',
-      quant_bits: 'export-quant-bits', quant_method: 'export-quant-method',
+      adapters: 'export-adapters', quant_bits: 'export-quant-bits', quant_method: 'export-quant-method',
       quant_n_samples: 'export-quant-n-samples', max_length: 'export-max-length',
       output_dir: 'export-output-dir', device_map: 'export-device-map',
+      hub_model_id: 'export-hub-model-id', more_params: 'export-more-params',
     },
     eval: {
       model: 'eval-model', model_type: 'eval-model-type', template: 'eval-template',
@@ -757,7 +772,7 @@
     train:  { use_ddp: 'train-use-ddp', use_liger_kernel: 'train-use-liger', use_chat_template: 'train-use-chat-template' },
     rlhf: { use_ddp: 'rlhf-use-ddp', use_liger_kernel: 'rlhf-use-liger', use_rslora: 'rlhf-use-rslora', use_dora: 'rlhf-use-dora', padding_free: 'rlhf-padding-free' },
     grpo: { use_ddp: 'grpo-use-ddp', use_liger_kernel: 'grpo-use-liger', use_rslora: 'grpo-use-rslora', use_dora: 'grpo-use-dora', padding_free: 'grpo-padding-free' },
-    export: { merge_lora: 'export-merge-lora' },
+    export: { merge_lora: 'export-merge-lora', push_to_hub: 'export-push-to-hub', hub_private_repo: 'export-hub-private', exist_ok: 'export-exist-ok' },
   };
 
   // Tag-input dataset prefixes
@@ -1013,6 +1028,8 @@
       }, 1500);
       if (result.log_file) startLogStream('train', result.log_file, 'train-log');
       loadTrainRecords(val('train-model'));
+      captureTrainExportHint('train', result);
+      schedulePrefillExportFromTrain();
     } catch (e) {
       setStatus(status, e.message, 'var(--danger)');
     } finally {
@@ -1514,6 +1531,8 @@
       setStatus(status, window.i18n[pageLang].statusRunning, 'var(--success)');
       setTimeout(() => refreshRlhfTasks(), 1500);
       if (result.log_file) startLogStream('rlhf', result.log_file, 'rlhf-log');
+      captureTrainExportHint('rlhf', result);
+      schedulePrefillExportFromTrain();
     } catch (e) {
       setStatus(status, e.message, 'var(--danger)');
     } finally {
@@ -1601,6 +1620,8 @@
       setStatus(status, window.i18n[pageLang].statusRunning, 'var(--success)');
       setTimeout(() => refreshGrpoTasks(), 1500);
       if (result.log_file) startLogStream('grpo', result.log_file, 'grpo-log');
+      captureTrainExportHint('grpo', result);
+      schedulePrefillExportFromTrain();
     } catch (e) {
       setStatus(status, e.message, 'var(--danger)');
     } finally {
@@ -1999,16 +2020,143 @@
   // ══════════════════════════════════════════════════════════════
   //  TAB: EXPORT
   // ══════════════════════════════════════════════════════════════
+  function captureTrainExportHint(prefix, result) {
+    exportPrefillDone[prefix] = false;
+    const outputDir = (result && (result.output_dir || result.logging_dir))
+      || val(prefix + '-output-dir')
+      || val(prefix + '-logging-dir');
+    lastTrainExportHint = {
+      prefix: prefix,
+      model: val(prefix + '-model'),
+      model_type: val(prefix + '-model-type'),
+      template: val(prefix + '-template'),
+      output_dir: outputDir,
+      logging_dir: (result && result.logging_dir) || val(prefix + '-logging-dir'),
+      tuner_type: val(prefix + '-tuner-type') || 'lora',
+      gpu_ids: gpuList(prefix + '-gpu-ids') || [],
+    };
+    if (result && result.output_dir) {
+      const outEl = document.getElementById(prefix + '-output-dir');
+      if (outEl) outEl.value = result.output_dir;
+    }
+  }
+
+  function collectTrainExportHint() {
+    if (lastTrainExportHint && (lastTrainExportHint.output_dir || lastTrainExportHint.model)) {
+      return lastTrainExportHint;
+    }
+    const prefixes = ['train', 'rlhf', 'grpo'];
+    for (let i = 0; i < prefixes.length; i++) {
+      const prefix = prefixes[i];
+      const outputDir = val(prefix + '-output-dir') || val(prefix + '-logging-dir');
+      const model = val(prefix + '-model');
+      if (outputDir || model) {
+        return {
+          prefix: prefix,
+          model: model,
+          model_type: val(prefix + '-model-type'),
+          template: val(prefix + '-template'),
+          output_dir: outputDir,
+          logging_dir: val(prefix + '-logging-dir'),
+          tuner_type: val(prefix + '-tuner-type') || 'lora',
+          gpu_ids: gpuList(prefix + '-gpu-ids') || [],
+        };
+      }
+    }
+    return null;
+  }
+
+  function applyExportSource(data, hint) {
+    const model = (data && data.model) || (hint && hint.model);
+    const modelEl = document.getElementById('export-model');
+    if (modelEl && model) modelEl.value = model;
+    const modelType = (data && data.model_type) || (hint && hint.model_type);
+    const typeEl = document.getElementById('export-model-type');
+    if (typeEl && modelType) typeEl.value = modelType;
+    const template = (data && data.template) || (hint && hint.template);
+    const tplEl = document.getElementById('export-template');
+    if (tplEl && template) tplEl.value = template;
+    const adaptersEl = document.getElementById('export-adapters');
+    if (adaptersEl && data && data.found) {
+      if (data.adapters) {
+        adaptersEl.value = data.adapters;
+        adaptersEl.dataset.autofilled = '1';
+      } else if (!data.merge_lora) {
+        adaptersEl.value = '';
+      }
+    }
+    const outEl = document.getElementById('export-output-dir');
+    if (outEl && data && data.output_dir && (!outEl.value.trim() || outEl.dataset.autofilled === '1')) {
+      outEl.value = data.output_dir;
+      outEl.dataset.autofilled = '1';
+    }
+    const mergeEl = document.getElementById('export-merge-lora');
+    if (mergeEl && data && data.merge_lora != null) mergeEl.checked = Boolean(data.merge_lora);
+    const existEl = document.getElementById('export-exist-ok');
+    if (existEl && data && data.exist_ok) existEl.checked = true;
+    if (hint && hint.gpu_ids && hint.gpu_ids.length) setGpuIds('export', hint.gpu_ids.join(','));
+  }
+
+  function schedulePrefillExportFromTrain() {
+    if (exportPrefillTimer) clearTimeout(exportPrefillTimer);
+    exportPrefillTimer = setTimeout(() => {
+      exportPrefillTimer = null;
+      prefillExportFromTrain();
+    }, 400);
+  }
+
+  function maybePrefillExportOnTrainComplete(prefix) {
+    if (exportPrefillDone[prefix]) return;
+    exportPrefillDone[prefix] = true;
+    schedulePrefillExportFromTrain();
+  }
+
+  async function prefillExportFromTrain() {
+    const hint = collectTrainExportHint();
+    const params = new URLSearchParams();
+    if (hint) {
+      if (hint.output_dir) params.set('output_dir', hint.output_dir);
+      if (hint.logging_dir) params.set('logging_dir', hint.logging_dir);
+      if (hint.model) params.set('model', hint.model);
+      if (hint.tuner_type) params.set('tuner_type', hint.tuner_type);
+    }
+    let data = { found: false };
+    if (params.toString()) {
+      try {
+        data = await apiFetch('/api/v1/export/from-train?' + params.toString());
+      } catch (_) {
+        data = { found: false };
+      }
+    }
+    applyExportSource(data, hint);
+  }
+
+  document.getElementById('export-push-to-hub').addEventListener('change', () => {
+    if (!document.getElementById('export-push-to-hub').checked) return;
+    const mergeLora = document.getElementById('export-merge-lora');
+    const existOk = document.getElementById('export-exist-ok');
+    if (mergeLora) mergeLora.checked = true;
+    if (existOk) existOk.checked = true;
+  });
+
   document.getElementById('export-btn-start').addEventListener('click', async () => {
     const status = 'export-status';
     const startBtn = document.getElementById('export-btn-start');
     setStatus(status, window.i18n[pageLang].statusStarting, 'var(--brand-600)');
     setBtnLoading(startBtn, true);
+    const pushToHub = document.getElementById('export-push-to-hub').checked;
+    const hubModelId = val('export-hub-model-id');
+    if (pushToHub && !hubModelId) {
+      setStatus(status, window.i18n[pageLang].exportHubModelIdRequired, 'var(--danger)');
+      setBtnLoading(startBtn, false);
+      return;
+    }
     const body = {
       model:          val('export-model') || '',
       model_type:     val('export-model-type'),
       template:       val('export-template'),
       merge_lora:     document.getElementById('export-merge-lora').checked,
+      adapters:       val('export-adapters'),
       quant_bits:     numVal('export-quant-bits'),
       quant_method:   val('export-quant-method'),
       quant_n_samples: numVal('export-quant-n-samples'),
@@ -2017,6 +2165,11 @@
       dataset:        datasetList('export-dataset'),
       gpu_ids:        gpuList('export-gpu-ids'),
       device_map:     val('export-device-map'),
+      push_to_hub:    pushToHub,
+      hub_model_id:   hubModelId,
+      hub_private_repo: document.getElementById('export-hub-private').checked,
+      hub_token:      val('export-hub-token'),
+      exist_ok:       document.getElementById('export-exist-ok').checked,
       more_params:    val('export-more-params'),
     };
     try {
@@ -2672,8 +2825,68 @@
     });
   }
 
-  function applyGpuDeviceOptions(devices, defaultDevice) {
+  let lastGpuDeviceType = 'gpu';
+
+  function inferGpuDeviceType(devices) {
+    if (!Array.isArray(devices)) return 'gpu';
+    if (devices.includes('npu')) return 'npu';
+    if (devices.includes('mlu')) return 'mlu';
+    if (devices.includes('mps')) return 'mps';
+    if (devices.includes('gpu')) return 'gpu';
+    return lastGpuDeviceType || 'gpu';
+  }
+
+  function gpuKindLabel(kind) {
+    const t = (window.i18n && window.i18n[pageLang]) || {};
+    const keys = {
+      npu: 'gpuKindNpu',
+      gpu: 'gpuKindGpu',
+      mlu: 'gpuKindMlu',
+      mps: 'gpuKindMps',
+      cpu: 'gpuKindCpu',
+    };
+    const fallbacks = { npu: 'NPU', gpu: 'GPU', mlu: 'MLU', mps: 'MPS', cpu: 'CPU' };
+    return t[keys[kind]] || fallbacks[kind] || kind.toUpperCase();
+  }
+
+  function formatGpuOptionLabel(value, deviceType) {
+    const v = String(value == null ? '' : value);
+    if (!v) return '';
+    if (v === 'cpu') return gpuKindLabel('cpu');
+    if (v === 'npu' || v === 'gpu' || v === 'mlu' || v === 'mps') return gpuKindLabel(v);
+    if (/^\d+$/.test(v)) return gpuKindLabel(deviceType || 'gpu') + ' ' + v;
+    return v;
+  }
+
+  function gpuFieldTitleKey(deviceType) {
+    if (deviceType === 'npu') return 'fieldNpuIds';
+    if (deviceType === 'mlu') return 'fieldMluIds';
+    return 'fieldGpuIds';
+  }
+
+  function relabelGpuDeviceOptions() {
+    const t = (window.i18n && window.i18n[pageLang]) || {};
+    const title = t[gpuFieldTitleKey(lastGpuDeviceType)] || t.fieldGpuIds;
+    if (title) {
+      document.querySelectorAll('[data-i18n="fieldGpuIds"]').forEach(el => {
+        el.textContent = title;
+      });
+    }
+    const gpuSelectIds = ['train-gpu-ids','rlhf-gpu-ids','grpo-gpu-ids',
+                          'infer-gpu-ids','export-gpu-ids','eval-gpu-ids','sample-gpu-ids'];
+    gpuSelectIds.forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      Array.from(sel.options).forEach(o => {
+        o.textContent = formatGpuOptionLabel(o.value, lastGpuDeviceType);
+      });
+    });
+  }
+  window.relabelGpuDeviceOptions = relabelGpuDeviceOptions;
+
+  function applyGpuDeviceOptions(devices, defaultDevice, deviceType) {
     if (!Array.isArray(devices) || devices.length === 0) return false;
+    lastGpuDeviceType = deviceType || inferGpuDeviceType(devices);
     const gpuSelectIds = ['train-gpu-ids','rlhf-gpu-ids','grpo-gpu-ids',
                           'infer-gpu-ids','export-gpu-ids','eval-gpu-ids','sample-gpu-ids'];
     gpuSelectIds.forEach(id => {
@@ -2684,7 +2897,7 @@
       devices.forEach(d => {
         const o = document.createElement('option');
         o.value = d;
-        o.textContent = d;
+        o.textContent = formatGpuOptionLabel(d, lastGpuDeviceType);
         // Keep prior selection across retries; otherwise use server default.
         if (prev.length ? prev.includes(d) : d === defaultDevice) o.selected = true;
         sel.appendChild(o);
@@ -2697,6 +2910,7 @@
         (fallback || sel.options[0]).selected = true;
       }
     });
+    relabelGpuDeviceOptions();
     return true;
   }
 
@@ -2704,7 +2918,7 @@
     for (let i = 0; i < retries; i++) {
       try {
         const data = await apiFetch('/api/v1/devices');
-        if (applyGpuDeviceOptions(data.devices, data.default)) return true;
+        if (applyGpuDeviceOptions(data.devices, data.default, data.device_type)) return true;
       } catch (_) {}
       if (i < retries - 1) {
         await new Promise(r => setTimeout(r, 150 * (i + 1)));

@@ -188,6 +188,7 @@ class ExportRequest(BaseModel):
     model_type: Optional[str] = None
     template: Optional[str] = None
     merge_lora: bool = False
+    adapters: Optional[str] = None
     quant_bits: Optional[int] = None
     quant_method: Optional[str] = None
     quant_n_samples: Optional[int] = None
@@ -196,6 +197,11 @@ class ExportRequest(BaseModel):
     dataset: Optional[List[str]] = None
     gpu_ids: Optional[List[str]] = None
     device_map: Optional[str] = None
+    push_to_hub: bool = False
+    hub_model_id: Optional[str] = None
+    hub_private_repo: bool = False
+    hub_token: Optional[str] = None
+    exist_ok: bool = False
     more_params: Optional[str] = None
 
 
@@ -366,12 +372,27 @@ def _safe_device_count() -> int:
     return 0
 
 
-def _probe_restful_ui_device_info() -> tuple[List[str], str, bool]:
-    """Return (choices, default, durable).
+def _fallback_device_type(choices: List[str]) -> str:
+    if 'npu' in choices:
+        return 'npu'
+    if 'mlu' in choices:
+        return 'mlu'
+    if 'mps' in choices:
+        return 'mps'
+    if 'gpu' in choices or any(c.isdigit() for c in choices):
+        return 'gpu'
+    return 'cpu'
+
+
+def _probe_restful_ui_device_info() -> tuple[List[str], str, bool, str]:
+    """Return (choices, default, durable, device_type).
 
     ``durable`` is True when the runtime reported a positive device count (safe to
     cache). Transient 0-count fallbacks still return accelerator labels so the UI
     is not empty, but are not cached.
+
+    ``choices`` keep the backend-facing values (``0`` / ``1`` / ``cpu`` / ``npu``).
+    ``device_type`` is the accelerator family used by the UI to show readable labels.
     """
     device_count = _safe_device_count()
     durable = device_count > 0
@@ -392,26 +413,26 @@ def _probe_restful_ui_device_info() -> tuple[List[str], str, bool]:
     # so the UI dropdown is not empty after refresh on NPU/GPU hosts.
     if npu:
         if device_count <= 1:
-            return ['npu', 'cpu'], 'npu', durable
-        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+            return ['npu', 'cpu'], 'npu', durable, 'npu'
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable, 'npu'
     if cuda:
         if device_count <= 1:
-            return ['gpu', 'cpu'], 'gpu', durable
-        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+            return ['gpu', 'cpu'], 'gpu', durable, 'gpu'
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable, 'gpu'
     if mlu:
         if device_count <= 1:
-            return ['mlu', 'cpu'], 'mlu', durable
-        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable
+            return ['mlu', 'cpu'], 'mlu', durable, 'mlu'
+        return [str(i) for i in range(device_count)] + ['cpu'], '0', durable, 'mlu'
     choices, default = get_ui_device_info()
-    return choices, default, True
+    return choices, default, True, _fallback_device_type(choices)
 
 
-def _get_restful_ui_device_info() -> tuple[List[str], str]:
+def _get_restful_ui_device_info() -> tuple[List[str], str, str]:
     global _DEVICE_INFO_CACHE
     if _DEVICE_INFO_CACHE is not None:
         return _DEVICE_INFO_CACHE
-    choices, default, durable = _probe_restful_ui_device_info()
-    info = (choices, default)
+    choices, default, durable, device_type = _probe_restful_ui_device_info()
+    info = (choices, default, device_type)
     if durable and choices:
         _DEVICE_INFO_CACHE = info
     return info
@@ -626,7 +647,10 @@ def _build_simple_command(subcmd: str, model: str, model_type: Optional[str],
                 command.extend([f'--{k}', str(v)])
 
     mp_dict, mp_cmd = _parse_more_params(more_params)
+    extra_keys = set(extra_kwargs or {})
     for k, v in mp_dict.items():
+        if k in extra_keys:
+            continue
         if isinstance(v, list):
             command.append(f'--{k}')
             command.extend([str(i) for i in v])
@@ -726,6 +750,156 @@ def _delete_train_records(model: str):
     _delete_scoped_records('train', model)
 
 
+def _resolved_output_dir(output_dir: Optional[str], logging_dir: str) -> str:
+    raw = (output_dir or logging_dir or '').strip()
+    if not raw:
+        return logging_dir
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return str(path.resolve())
+
+
+def _record_params_with_paths(req: BaseModel, log_file: str, logging_dir: str) -> dict:
+    try:
+        params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
+    except AttributeError:
+        params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
+    params['log_file'] = log_file
+    params['logging_dir'] = logging_dir
+    params['output_dir'] = _resolved_output_dir(getattr(req, 'output_dir', None), logging_dir)
+    return params
+
+
+_CHECKPOINT_WEIGHT_MARKERS = (
+    'adapter_config.json',
+    'adapter_model.safetensors',
+    'adapter_model.bin',
+    'adapter_model.pt',
+    'model.safetensors',
+    'model.safetensors.index.json',
+    'pytorch_model.bin',
+    'pytorch_model.bin.index.json',
+)
+
+
+def _expand_run_dir(path_str: str) -> Path:
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
+def _is_checkpoint_dir(path: Path) -> bool:
+    return path.is_dir() and any((path / name).is_file() for name in _CHECKPOINT_WEIGHT_MARKERS)
+
+
+def latest_checkpoint_dir(output_dir: Optional[str]) -> Optional[str]:
+    """Return the newest training checkpoint under output_dir, if any."""
+    if not output_dir:
+        return None
+    root = _expand_run_dir(output_dir)
+    if not root.is_dir():
+        return None
+
+    numbered: List[tuple] = []
+    others: List[Path] = []
+    for child in root.iterdir():
+        if not _is_checkpoint_dir(child):
+            continue
+        name = child.name
+        if name.startswith('checkpoint-'):
+            suffix = name[len('checkpoint-'):]
+            if suffix.isdigit():
+                numbered.append((int(suffix), child))
+                continue
+        others.append(child)
+
+    if numbered:
+        numbered.sort(key=lambda item: item[0])
+        return str(numbered[-1][1].resolve())
+    if others:
+        others.sort(key=lambda path: path.stat().st_mtime)
+        return str(others[-1].resolve())
+    if _is_checkpoint_dir(root):
+        return str(root.resolve())
+    return None
+
+
+def _read_swift_args(*dirs: Optional[str]) -> dict:
+    seen = set()
+    for raw in dirs:
+        if not raw:
+            continue
+        path = _expand_run_dir(raw)
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        args_file = path / 'args.json'
+        if not args_file.is_file():
+            continue
+        try:
+            data = json.loads(args_file.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def _latest_record_for_model(model: str) -> Optional[dict]:
+    for scope in ('train', 'rlhf', 'grpo'):
+        timestamps = _list_scoped_records(scope, model)
+        if timestamps:
+            try:
+                return _load_scoped_record(scope, model, timestamps[0])
+            except Exception:
+                continue
+    return None
+
+
+def resolve_export_source(
+    output_dir: Optional[str] = None,
+    logging_dir: Optional[str] = None,
+    model: Optional[str] = None,
+    tuner_type: Optional[str] = None,
+) -> dict:
+    record = None
+    source_dir = (output_dir or logging_dir or '').strip() or None
+    if not source_dir and model:
+        record = _latest_record_for_model(model)
+        if record:
+            source_dir = record.get('output_dir') or record.get('logging_dir')
+            tuner_type = tuner_type or record.get('tuner_type')
+    if not source_dir:
+        return {'found': False}
+
+    adapters = latest_checkpoint_dir(source_dir)
+    args = _read_swift_args(adapters, source_dir)
+    if record is None and model:
+        record = _latest_record_for_model(model)
+
+    tuner = str(tuner_type or args.get('tuner_type') or (record or {}).get('tuner_type') or 'lora').lower()
+    merge_lora = tuner not in ('full', 'freeze')
+    base_model = args.get('model') or (record or {}).get('model') or model
+    export_model = adapters if not merge_lora and adapters else base_model
+    export_dir = f'{adapters}-merged' if merge_lora and adapters else None
+
+    return {
+        'found': True,
+        'model': export_model,
+        'model_type': args.get('model_type') or (record or {}).get('model_type'),
+        'template': args.get('template') or (record or {}).get('template'),
+        'adapters': adapters if merge_lora else None,
+        'output_dir': export_dir,
+        'merge_lora': merge_lora,
+        'exist_ok': True,
+        'tuner_type': tuner,
+        'source_dir': str(_expand_run_dir(source_dir).resolve()) if _expand_run_dir(source_dir).exists() else source_dir,
+    }
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -768,7 +942,7 @@ def create_app(
     # ------------------------------------------------------------------
     @app.get('/health')
     async def health():
-        device_choices, default_device = await asyncio.to_thread(_get_restful_ui_device_info)
+        device_choices, default_device, device_type = await asyncio.to_thread(_get_restful_ui_device_info)
         try:
             version = swift.__version__
         except AttributeError:
@@ -778,6 +952,7 @@ def create_app(
             'version': version,
             'devices': device_choices,
             'default_device': default_device,
+            'device_type': device_type,
             'tensorboard_path_prefix': tb_prefix,
         }
 
@@ -788,8 +963,12 @@ def create_app(
     async def devices():
         # Offload NPU/CUDA probes off the event loop; concurrent page-refresh
         # loads previously raced with heavy /models|/datasets imports.
-        device_choices, default_device = await asyncio.to_thread(_get_restful_ui_device_info)
-        return {'devices': device_choices, 'default': default_device}
+        device_choices, default_device, device_type = await asyncio.to_thread(_get_restful_ui_device_info)
+        return {
+            'devices': device_choices,
+            'default': default_device,
+            'device_type': device_type,
+        }
 
     # ------------------------------------------------------------------
     # Models
@@ -1214,18 +1393,12 @@ def create_app(
     async def train_start(req: TrainRequest):
         subcmd = req.train_stage if req.train_stage in ('sft', 'pt') else 'sft'
         command, all_envs, log_file, logging_dir = _build_train_command(req, subcmd)
+        resolved_output = _resolved_output_dir(req.output_dir, logging_dir)
         if not req.dry_run:
             await asyncio.to_thread(run_command_in_background_with_popen, command, all_envs, log_file)
             # auto-save training record (exclude sensitive/volatile fields)
             try:
-                try:
-                    record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                except AttributeError:
-                    record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                # Persist resolved log_file / logging_dir so finished tasks can
-                # still display their training log when the record is selected.
-                record_params['log_file'] = log_file
-                record_params['logging_dir'] = logging_dir
+                record_params = _record_params_with_paths(req, log_file, logging_dir)
                 await asyncio.to_thread(_save_train_record, req.model, record_params)
             except Exception:
                 pass
@@ -1234,6 +1407,7 @@ def create_app(
             'command': ' '.join(command),
             'log_file': log_file,
             'logging_dir': logging_dir,
+            'output_dir': resolved_output,
         }
 
     # ------------------------------------------------------------------
@@ -1278,15 +1452,11 @@ def create_app(
         _add_rlhf('simpo_gamma', req.simpo_gamma)
         _add_rlhf('desirable_weight', req.desirable_weight)
         _add_rlhf('undesirable_weight', req.undesirable_weight)
+        resolved_output = _resolved_output_dir(req.output_dir, logging_dir)
         if not req.dry_run:
             await asyncio.to_thread(run_command_in_background_with_popen, command, all_envs, log_file)
             try:
-                try:
-                    record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                except AttributeError:
-                    record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                record_params['log_file'] = log_file
-                record_params['logging_dir'] = logging_dir
+                record_params = _record_params_with_paths(req, log_file, logging_dir)
                 await asyncio.to_thread(_save_scoped_record, 'rlhf', req.model, record_params)
             except Exception:
                 pass
@@ -1295,6 +1465,7 @@ def create_app(
             'command': ' '.join(command),
             'log_file': log_file,
             'logging_dir': logging_dir,
+            'output_dir': resolved_output,
         }
 
     # ------------------------------------------------------------------
@@ -1344,15 +1515,11 @@ def create_app(
         if req.epsilon_high is not None:
             command.extend(['--epsilon_high', str(req.epsilon_high)])
         _add_grpo('num_iterations', req.num_iterations)
+        resolved_output = _resolved_output_dir(req.output_dir, logging_dir)
         if not req.dry_run:
             await asyncio.to_thread(run_command_in_background_with_popen, command, all_envs, log_file)
             try:
-                try:
-                    record_params = req.model_dump(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                except AttributeError:
-                    record_params = req.dict(exclude={'dry_run', 'hub_token', 'swanlab_token'})
-                record_params['log_file'] = log_file
-                record_params['logging_dir'] = logging_dir
+                record_params = _record_params_with_paths(req, log_file, logging_dir)
                 await asyncio.to_thread(_save_scoped_record, 'grpo', req.model, record_params)
             except Exception:
                 pass
@@ -1361,6 +1528,7 @@ def create_app(
             'command': ' '.join(command),
             'log_file': log_file,
             'logging_dir': logging_dir,
+            'output_dir': resolved_output,
         }
 
     # ------------------------------------------------------------------
@@ -1499,13 +1667,37 @@ def create_app(
     # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
+    @app.get('/api/v1/export/from-train')
+    async def export_from_train(
+        output_dir: Optional[str] = None,
+        logging_dir: Optional[str] = None,
+        model: Optional[str] = None,
+        tuner_type: Optional[str] = None,
+    ):
+        return await asyncio.to_thread(
+            resolve_export_source, output_dir, logging_dir, model, tuner_type)
+
     @app.post('/api/v1/export/start')
     async def export_start(req: ExportRequest):
+        if req.push_to_hub and not (req.hub_model_id or '').strip():
+            raise HTTPException(status_code=400, detail='push_to_hub requires hub_model_id (namespace/repo)')
         extra = {}
         if req.template:
             extra['template'] = req.template
         if req.merge_lora:
             extra['merge_lora'] = 'true'
+        if req.adapters:
+            extra['adapters'] = req.adapters
+        if req.push_to_hub:
+            extra['push_to_hub'] = 'true'
+        if req.hub_model_id:
+            extra['hub_model_id'] = req.hub_model_id
+        if req.hub_private_repo:
+            extra['hub_private_repo'] = 'true'
+        if req.hub_token:
+            extra['hub_token'] = req.hub_token
+        if req.exist_ok:
+            extra['exist_ok'] = 'true'
         if req.quant_bits:
             extra['quant_bits'] = req.quant_bits
         if req.quant_method:
