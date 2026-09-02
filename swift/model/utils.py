@@ -13,7 +13,7 @@ from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.utils import (is_torch_bf16_gpu_available, is_torch_cuda_available, is_torch_mps_available,
                                 is_torch_npu_available, strtobool)
 from types import MethodType
-from typing import List, Optional, TypeVar, Union
+from typing import List, Optional, Sequence, TypeVar, Union
 
 from swift.utils import (HfConfigFactory, Processor, deep_getattr, get_dist_setting, get_env_args, get_logger, is_mp,
                          to_device)
@@ -286,6 +286,41 @@ if requires_patch:
     _patch_conv3d()
 
 
+_BASE_MODEL_CARD_NAMES = ('README.md', 'Readme.md', 'readme.md')
+
+
+def copy_base_model_readme(src_dirs: Optional[Sequence[Optional[str]]], output_dir: Optional[str]) -> bool:
+    """Copy the base model's README.md into an export directory.
+
+    CSGHub reads YAML frontmatter (`pipeline_tag`, tags) from README.md to
+    decide the model task. `save_pretrained` / LoRA merge do not keep that
+    file, so exported repos would otherwise show the wrong inference playground.
+    Prefer the base snapshot over adapter training cards.
+    """
+    if not output_dir:
+        return False
+    os.makedirs(output_dir, exist_ok=True)
+    dst_path = os.path.join(output_dir, 'README.md')
+    seen = set()
+    for src_dir in src_dirs or []:
+        if not src_dir:
+            continue
+        abs_src_dir = os.path.abspath(src_dir)
+        if abs_src_dir in seen or not os.path.isdir(abs_src_dir):
+            continue
+        seen.add(abs_src_dir)
+        for name in _BASE_MODEL_CARD_NAMES:
+            src_path = os.path.join(abs_src_dir, name)
+            if not os.path.isfile(src_path):
+                continue
+            if os.path.abspath(src_path) == os.path.abspath(dst_path):
+                return True
+            shutil.copy2(src_path, dst_path)
+            logger.info(f'Copied base model README.md from `{src_path}` to `{dst_path}`.')
+            return True
+    return False
+
+
 def save_checkpoint(model: Optional[PreTrainedModel],
                     processor: Processor,
                     output_dir: str,
@@ -323,6 +358,12 @@ def save_checkpoint(model: Optional[PreTrainedModel],
             elif os.path.isdir(src_path):
                 shutil.copytree(src_path, tgt_path)
                 break
+    # Always take README.md from the base snapshot last, even if an adapter
+    # checkpoint already wrote a training-only model card.
+    copy_base_model_readme(
+        [getattr(model, 'model_dir', None) if model is not None else None],
+        output_dir,
+    )
 
 
 def get_ckpt_dir(model_dir: str, adapters_dir: Optional[List[str]]) -> str:

@@ -2,6 +2,7 @@
 from typing import List, Optional, Union
 
 from swift.arguments import ExportArguments
+from swift.model.utils import copy_base_model_readme
 from swift.pipelines import SwiftPipeline
 from swift.tuners import swift_to_peft_format
 from swift.utils import get_logger
@@ -19,6 +20,7 @@ class SwiftExport(SwiftPipeline):
 
     def run(self):
         args = self.args
+        base_model_dir = getattr(args, 'model_dir', None)
         if args.to_peft_format:
             args.adapters[0] = swift_to_peft_format(args.adapters[0], args.output_dir)
         if args.merge_lora:
@@ -27,6 +29,8 @@ class SwiftExport(SwiftPipeline):
                 args.output_dir = None
             merge_lora(args)
             args.output_dir = output_dir  # recover
+        copy_base_model_readme([base_model_dir], args.output_dir)
+        copy_base_model_readme([base_model_dir], args.model_dir)
         if args.quant_method:
             quantize_model(args)
         elif args.to_ollama:
@@ -42,6 +46,7 @@ class SwiftExport(SwiftPipeline):
         elif args.push_to_hub:
             model_dir = args.adapters and args.adapters[0] or args.model_dir
             assert model_dir, f'model_dir: {model_dir}'
+            copy_base_model_readme([base_model_dir], model_dir)
             args.hub.push_to_hub(
                 args.hub_model_id,
                 model_dir,
