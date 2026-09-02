@@ -66,6 +66,7 @@ class TrainRequest(BaseModel):
     neftune_noise_alpha: Optional[float] = None
     output_dir: Optional[str] = None
     logging_dir: Optional[str] = None
+    resume_from_checkpoint: Optional[str] = None
     system: Optional[str] = None
     envs: Optional[str] = None
     dry_run: bool = False
@@ -585,16 +586,39 @@ def _build_train_command(req: TrainRequest, subcmd: str, extra_flags: Optional[l
     if req.swanlab_mode:
         _add('swanlab_mode', req.swanlab_mode)
 
+    mp_dict, mp_cmd = _parse_more_params(req.more_params)
+    resume_ckpt = (getattr(req, 'resume_from_checkpoint', None) or '').strip() or None
+    if not resume_ckpt:
+        raw_resume = mp_dict.pop('resume_from_checkpoint', None)
+        if raw_resume:
+            resume_ckpt = str(raw_resume).strip() or None
+    else:
+        mp_dict.pop('resume_from_checkpoint', None)
+    resume_only_model = mp_dict.pop('resume_only_model', None)
+
     # output/logging dirs
     model_type = req.model_type or 'model'
     ts = _timestamp()
     logging_dir = req.logging_dir or f'output/{model_type}-{ts}'
     output_dir = req.output_dir or logging_dir
+    ckpt_path = _expand_run_dir(resume_ckpt) if resume_ckpt else None
+    if ckpt_path is not None:
+        if not req.output_dir:
+            output_dir = str(ckpt_path.parent if ckpt_path.name.startswith('checkpoint-') else ckpt_path)
+        if not req.logging_dir:
+            logging_dir = output_dir
     command.extend(['--add_version', 'False', '--output_dir', output_dir,
                     '--logging_dir', logging_dir, '--ignore_args_error', 'True'])
+    if ckpt_path is not None:
+        _add('resume_from_checkpoint', str(ckpt_path))
+        if resume_only_model is None:
+            if not (ckpt_path / 'scheduler.pt').is_file():
+                _add('resume_only_model', True)
+        elif str(resume_only_model).lower() in ('true', '1'):
+            _add('resume_only_model', True)
+        elif str(resume_only_model).lower() in ('false', '0'):
+            _add('resume_only_model', False)
 
-    # more_params
-    mp_dict, mp_cmd = _parse_more_params(req.more_params)
     for k, v in mp_dict.items():
         _add(k, v)
     _add_more_params_to_cmd(command, mp_cmd)
@@ -857,6 +881,84 @@ def _latest_record_for_model(model: str) -> Optional[dict]:
             except Exception:
                 continue
     return None
+
+
+def _read_json_dict(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def trainer_state_unfinished(state: dict) -> tuple:
+    """Return (unfinished, global_step, max_steps) from a trainer_state.json dict."""
+    if not state:
+        return True, None, None
+    global_step = state.get('global_step')
+    max_steps = state.get('max_steps')
+    log_history = state.get('log_history') or []
+    has_train_loss = bool(
+        log_history and isinstance(log_history[-1], dict) and 'train_loss' in log_history[-1])
+    gs = int(global_step) if isinstance(global_step, (int, float)) else None
+    ms = int(max_steps) if isinstance(max_steps, (int, float)) and max_steps > 0 else None
+    if gs is not None and ms is not None:
+        return gs < ms, gs, ms
+    if has_train_loss:
+        return False, gs, ms
+    return True, gs, ms
+
+
+def _empty_resume_hint() -> dict:
+    return {
+        'found': False,
+        'output_dir': None,
+        'checkpoint': None,
+        'global_step': None,
+        'max_steps': None,
+        'resume_only_model': False,
+    }
+
+
+def resolve_train_resume_hint(model: Optional[str] = None, output_dir: Optional[str] = None) -> dict:
+    """Detect an unfinished checkpoint that the REST train UI can resume from."""
+    source_dir = (output_dir or '').strip() or None
+    if not source_dir and model:
+        record = _latest_record_for_model(model)
+        if record:
+            source_dir = record.get('output_dir') or record.get('logging_dir')
+    if not source_dir:
+        return _empty_resume_hint()
+
+    checkpoint = latest_checkpoint_dir(source_dir)
+    if not checkpoint:
+        return _empty_resume_hint()
+
+    ckpt = Path(checkpoint)
+    run_path = ckpt.parent if ckpt.name.startswith('checkpoint-') else ckpt
+    state = _read_json_dict(ckpt / 'trainer_state.json')
+    if not state:
+        state = _read_json_dict(run_path / 'trainer_state.json')
+    if state.get('max_steps') in (None, 0, -1):
+        args = _read_swift_args(str(ckpt), str(run_path))
+        raw_max = args.get('max_steps')
+        if isinstance(raw_max, (int, float)) and raw_max > 0:
+            state = {**state, 'max_steps': int(raw_max)}
+    unfinished, global_step, max_steps = trainer_state_unfinished(state)
+    if not unfinished:
+        return _empty_resume_hint()
+
+    output_abs = str(run_path.resolve()) if run_path.exists() else str(run_path)
+    return {
+        'found': True,
+        'output_dir': output_abs,
+        'checkpoint': checkpoint,
+        'global_step': global_step,
+        'max_steps': max_steps,
+        'resume_only_model': not (ckpt / 'scheduler.pt').is_file(),
+    }
 
 
 def resolve_export_source(
@@ -1173,6 +1275,22 @@ def create_app(
     # ------------------------------------------------------------------
     # Training records
     # ------------------------------------------------------------------
+
+    @app.get('/api/v1/train/resume-hint')
+    async def train_resume_hint(model: str = Query(...), output_dir: Optional[str] = None):
+        def _run():
+            try:
+                running = bool(get_running_tasks('sft') or get_running_tasks('pt'))
+            except Exception:
+                running = False
+            if running:
+                return _empty_resume_hint()
+            return resolve_train_resume_hint(model=model, output_dir=output_dir)
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.get('/api/v1/train/records')
     async def train_records_list(model: str = Query(...)):

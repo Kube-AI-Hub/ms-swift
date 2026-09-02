@@ -27,6 +27,7 @@
   langSelect.addEventListener('change', () => {
     pageLang = langSelect.value;
     window.applyI18n(pageLang);
+    if (typeof applyTrainResumeButton === 'function') applyTrainResumeButton();
   });
 
   const DEFAULT_GRPO_SYSTEM =
@@ -69,6 +70,14 @@
         refreshTasks(...tabCmds[target]).then(() => {
           if (target === 'infer' || target === 'export' || target === 'eval' || target === 'sample') {
             updateTaskButtons(target);
+          }
+          if (target === 'export') {
+            const sel = document.getElementById('export-running-tasks');
+            if (sel && sel.value) {
+              setStatus('export-status', window.i18n[pageLang].statusRunning, 'var(--success)');
+              setExportRunning(true);
+              startExportWatch(sel.value);
+            }
           }
         });
       }
@@ -880,8 +889,73 @@
     }
   }
 
+  let trainResumeHint = null;
+  let trainResumeHintTimer = null;
+  let trainResumeFilling = false;
+
+  function hasRunningTrainTask() {
+    const sel = document.getElementById('train-running-tasks');
+    return !!(sel && sel.options.length > 0 && sel.options[0].value);
+  }
+
+  function applyTrainResumeButton() {
+    const btn = document.getElementById('train-btn-start');
+    if (!btn) return;
+    const useContinue = !!(trainResumeHint && trainResumeHint.found) && !hasRunningTrainTask();
+    const key = useContinue ? 'btnContinue' : 'btnStart';
+    btn.setAttribute('data-i18n', key);
+    const t = window.i18n[pageLang];
+    if (t && t[key] !== undefined) btn.textContent = t[key];
+  }
+
+  function clearTrainResumeHint() {
+    trainResumeHint = null;
+    applyTrainResumeButton();
+  }
+
+  async function refreshTrainResumeHint(opts) {
+    const applyDir = !!(opts && opts.applyDir);
+    const model = val('train-model');
+    const outputDirEl = document.getElementById('train-output-dir');
+    const outputDir = outputDirEl ? outputDirEl.value.trim() : '';
+    if (!model || hasRunningTrainTask()) {
+      clearTrainResumeHint();
+      return;
+    }
+    if (!applyDir && !outputDir) {
+      clearTrainResumeHint();
+      return;
+    }
+    const params = new URLSearchParams({ model });
+    try {
+      let hint = null;
+      if (outputDir) {
+        const scoped = new URLSearchParams({ model, output_dir: outputDir });
+        const data = await apiFetch('/api/v1/train/resume-hint?' + scoped.toString());
+        hint = (data && data.found) ? data : null;
+      }
+      if (!hint && applyDir) {
+        const data = await apiFetch('/api/v1/train/resume-hint?' + params.toString());
+        hint = (data && data.found) ? data : null;
+        if (hint && hint.output_dir && outputDirEl) {
+          const current = outputDirEl.value.trim();
+          if (!current || current !== hint.output_dir) {
+            trainResumeFilling = true;
+            outputDirEl.value = hint.output_dir;
+            trainResumeFilling = false;
+          }
+        }
+      }
+      trainResumeHint = hint;
+    } catch (_) {
+      trainResumeHint = null;
+    }
+    applyTrainResumeButton();
+    scheduleTrainCommandPreview();
+  }
+
   function buildTrainStartBody(dryRun) {
-    return {
+    const body = {
       model:                       val('train-model') || '',
       model_type:                  val('train-model-type'),
       template:                    val('train-template'),
@@ -958,6 +1032,11 @@
       swanlab_exp_name:            val('train-swanlab-exp-name'),
       swanlab_mode:                val('train-swanlab-mode'),
     };
+    if (trainResumeHint && trainResumeHint.found && trainResumeHint.checkpoint && !hasRunningTrainTask()) {
+      body.resume_from_checkpoint = trainResumeHint.checkpoint;
+      if (!body.output_dir && trainResumeHint.output_dir) body.output_dir = trainResumeHint.output_dir;
+    }
+    return body;
   }
 
   let trainCmdPreviewGen = 0;
@@ -1034,6 +1113,7 @@
       setStatus(status, e.message, 'var(--danger)');
     } finally {
       setBtnLoading(startBtn, false);
+      refreshTrainResumeHint({ applyDir: false });
     }
   });
 
@@ -1076,14 +1156,29 @@
     });
   })();
 
+  (function wireTrainResumeHint() {
+    const outEl = document.getElementById('train-output-dir');
+    if (!outEl) return;
+    outEl.addEventListener('input', () => {
+      if (trainResumeFilling) return;
+      if (trainResumeHintTimer) clearTimeout(trainResumeHintTimer);
+      trainResumeHintTimer = setTimeout(() => refreshTrainResumeHint({ applyDir: false }), 300);
+    });
+    outEl.addEventListener('change', () => {
+      if (trainResumeFilling) return;
+      refreshTrainResumeHint({ applyDir: false });
+    });
+  })();
+
   document.getElementById('train-btn-refresh').addEventListener('click',
-    async () => { await refreshTasks(['sft', 'pt'], 'train-running-tasks', 'train-status'); updateTrainKillBtn(); });
+    async () => { await refreshTasks(['sft', 'pt'], 'train-running-tasks', 'train-status'); updateTrainKillBtn(); refreshTrainResumeHint({ applyDir: false }); });
   document.getElementById('train-btn-kill').addEventListener('click', async () => {
     const btn = document.getElementById('train-btn-kill');
     setBtnLoading(btn, true);
     await killSelectedTask('train-running-tasks', ['sft', 'pt'], 'train-status');
     setBtnLoading(btn, false);
     updateTrainKillBtn();
+    refreshTrainResumeHint({ applyDir: false });
   });
 
   let trainTbOpen = false;
@@ -1772,6 +1867,12 @@
       const logEl = document.getElementById(prefix + '-log');
       if (logEl) { logEl.style.display = ''; logEl.value = window.i18n[pageLang].loadingLog || '正在加载日志...'; }
       startLogStream(prefix, logFile, prefix + '-log');
+      if (prefix === 'export') {
+        persistExportSession({ log_file: logFile, status: 'running' });
+        setStatus('export-status', window.i18n[pageLang].statusRunning, 'var(--success)');
+        setExportRunning(true);
+        startExportWatch(logFile);
+      }
     });
   });
 
@@ -2131,13 +2232,184 @@
     applyExportSource(data, hint);
   }
 
-  document.getElementById('export-push-to-hub').addEventListener('change', () => {
-    if (!document.getElementById('export-push-to-hub').checked) return;
+  const EXPORT_LAST_KEY = 'swift.export.last';
+  let exportWatchTimer = null;
+  let exportWatchLogFile = null;
+
+  function applyExportPushSideEffects() {
+    if (!document.getElementById('export-push-to-hub') || !document.getElementById('export-push-to-hub').checked) return;
     const mergeLora = document.getElementById('export-merge-lora');
     const existOk = document.getElementById('export-exist-ok');
     if (mergeLora) mergeLora.checked = true;
     if (existOk) existOk.checked = true;
+  }
+
+  function exportLogLooksFailed(text) {
+    const tail = String(text || '').slice(-8000);
+    if (/Traceback \(most recent call last\)/.test(tail)) return true;
+    if (/\b(ERROR|Error|FAILED|Exception)\b/.test(tail) && !/pushed to the Hub|Successfully saved|Export complete/i.test(tail)) {
+      return true;
+    }
+    return false;
+  }
+
+  function stopExportWatch() {
+    if (exportWatchTimer) {
+      clearInterval(exportWatchTimer);
+      exportWatchTimer = null;
+    }
+    exportWatchLogFile = null;
+  }
+
+  function persistExportSession(extra) {
+    extra = extra || {};
+    const prev = loadExportSession() || {};
+    const body = extra.body ? { ...extra.body } : {};
+    delete body.hub_token;
+    const mergeLora = document.getElementById('export-merge-lora');
+    const pushEl = document.getElementById('export-push-to-hub');
+    const privateEl = document.getElementById('export-hub-private');
+    const existEl = document.getElementById('export-exist-ok');
+    const record = {
+      ...prev,
+      model: body.model || val('export-model') || prev.model,
+      model_type: body.model_type || val('export-model-type') || prev.model_type,
+      template: body.template || val('export-template') || prev.template,
+      merge_lora: body.merge_lora != null ? body.merge_lora : (mergeLora ? mergeLora.checked : prev.merge_lora),
+      adapters: body.adapters || val('export-adapters') || prev.adapters,
+      output_dir: body.output_dir || val('export-output-dir') || prev.output_dir,
+      hub_model_id: body.hub_model_id || val('export-hub-model-id') || prev.hub_model_id,
+      push_to_hub: body.push_to_hub != null ? body.push_to_hub : (pushEl ? pushEl.checked : prev.push_to_hub),
+      hub_private_repo: body.hub_private_repo != null ? body.hub_private_repo : (privateEl ? privateEl.checked : prev.hub_private_repo),
+      exist_ok: body.exist_ok != null ? body.exist_ok : (existEl ? existEl.checked : prev.exist_ok),
+      log_file: extra.log_file !== undefined ? extra.log_file : (prev.log_file || null),
+      status: extra.status || prev.status || 'running',
+    };
+    try { localStorage.setItem(EXPORT_LAST_KEY, JSON.stringify(record)); } catch (_) {}
+  }
+
+  function loadExportSession() {
+    try {
+      return JSON.parse(localStorage.getItem(EXPORT_LAST_KEY) || 'null');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function applySavedExportForm(saved) {
+    if (!saved || typeof saved !== 'object') return;
+    const fields = {
+      model: 'export-model', model_type: 'export-model-type', template: 'export-template',
+      adapters: 'export-adapters', output_dir: 'export-output-dir', hub_model_id: 'export-hub-model-id',
+    };
+    Object.entries(fields).forEach(([key, id]) => {
+      if (saved[key] == null || saved[key] === '') return;
+      const el = document.getElementById(id);
+      if (el) el.value = saved[key];
+    });
+    const boxes = {
+      merge_lora: 'export-merge-lora', push_to_hub: 'export-push-to-hub',
+      hub_private_repo: 'export-hub-private', exist_ok: 'export-exist-ok',
+    };
+    Object.entries(boxes).forEach(([key, id]) => {
+      if (saved[key] == null) return;
+      const el = document.getElementById(id);
+      if (el) el.checked = Boolean(saved[key]);
+    });
+  }
+
+  function setExportRunning(running) {
+    const startBtn = document.getElementById('export-btn-start');
+    setBtnLoading(startBtn, running);
+  }
+
+  function markExportFinished(logFile) {
+    stopExportWatch();
+    const logEl = document.getElementById('export-log');
+    const failed = exportLogLooksFailed(logEl && logEl.value);
+    const i18n = window.i18n[pageLang] || {};
+    setStatus('export-status', failed ? (i18n.statusError || '错误') : (i18n.statusDone || '完成'),
+      failed ? 'var(--danger)' : 'var(--success)');
+    setExportRunning(false);
+    persistExportSession({ log_file: logFile, status: failed ? 'error' : 'done' });
+    refreshTasks('export', 'export-running-tasks', 'export-status').then(() => updateTaskButtons('export'));
+  }
+
+  function sameExportLogFile(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const na = String(a).replace(/\\/g, '/');
+    const nb = String(b).replace(/\\/g, '/');
+    return na.endsWith(nb) || nb.endsWith(na);
+  }
+
+  function startExportWatch(logFile) {
+    if (!logFile) return;
+    exportWatchLogFile = logFile;
+    if (exportWatchTimer) clearInterval(exportWatchTimer);
+    let misses = 0;
+    let seen = false;
+    const startedAt = Date.now();
+    const tick = async () => {
+      if (exportWatchLogFile !== logFile) return;
+      try {
+        const data = await apiFetch('/api/v1/tasks?cmd=export');
+        const still = (data.tasks || []).some(t => sameExportLogFile(t.log_file, logFile));
+        if (still) {
+          seen = true;
+          misses = 0;
+          setStatus('export-status', window.i18n[pageLang].statusRunning, 'var(--success)');
+          setExportRunning(true);
+          return;
+        }
+        if (!seen) {
+          if (Date.now() - startedAt < 15000) return;
+          markExportFinished(logFile);
+          return;
+        }
+        misses += 1;
+        if (misses < 2) return;
+        markExportFinished(logFile);
+      } catch (_) {}
+    };
+    tick();
+    exportWatchTimer = setInterval(tick, 2000);
+  }
+
+  function restoreExportPage() {
+    const sel = document.getElementById('export-running-tasks');
+    const runningLog = sel && sel.value;
+    if (runningLog) {
+      setStatus('export-status', window.i18n[pageLang].statusRunning, 'var(--success)');
+      setExportRunning(true);
+      persistExportSession({ log_file: runningLog, status: 'running' });
+      startExportWatch(runningLog);
+      return;
+    }
+    const saved = loadExportSession();
+    if (!saved) return;
+    applySavedExportForm(saved);
+    if (saved.log_file) {
+      const logEl = document.getElementById('export-log');
+      if (logEl) { logEl.style.display = ''; logEl.value = window.i18n[pageLang].loadingLog || '正在加载日志...'; }
+      startLogStream('export', saved.log_file, 'export-log');
+      if (saved.status === 'running') {
+        setStatus('export-status', window.i18n[pageLang].statusRunning, 'var(--success)');
+        setExportRunning(true);
+        startExportWatch(saved.log_file);
+        return;
+      }
+    }
+    const i18n = window.i18n[pageLang] || {};
+    setExportRunning(false);
+    if (saved.status === 'error') setStatus('export-status', i18n.statusError || '错误', 'var(--danger)');
+    else if (saved.status === 'done') setStatus('export-status', i18n.statusDone || '完成', 'var(--success)');
+  }
+
+  document.getElementById('export-push-to-hub').addEventListener('change', () => {
+    applyExportPushSideEffects();
   });
+  applyExportPushSideEffects();
 
   document.getElementById('export-btn-start').addEventListener('click', async () => {
     const status = 'export-status';
@@ -2176,7 +2448,13 @@
       const result = await apiFetch('/api/v1/export/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
+      persistExportSession({ body, log_file: result.log_file, status: 'running' });
       setStatus(status, window.i18n[pageLang].statusRunning, 'var(--success)');
+      setExportRunning(true);
+      if (result.log_file) {
+        startLogStream('export', result.log_file, 'export-log');
+        startExportWatch(result.log_file);
+      }
       setTimeout(async () => {
         await refreshTasks('export', 'export-running-tasks', status);
         const sel = document.getElementById('export-running-tasks');
@@ -2186,11 +2464,10 @@
         }
         updateTaskButtons('export');
       }, 1500);
-      if (result.log_file) startLogStream('export', result.log_file, 'export-log');
     } catch (e) {
       setStatus(status, e.message, 'var(--danger)');
-    } finally {
-      setBtnLoading(startBtn, false);
+      persistExportSession({ body, status: 'error' });
+      setExportRunning(false);
     }
   });
 
@@ -2201,7 +2478,11 @@
   document.getElementById('export-btn-kill').addEventListener('click', async () => {
     const btn = document.getElementById('export-btn-kill');
     setBtnLoading(btn, true);
+    stopExportWatch();
+    setExportRunning(false);
+    persistExportSession({ status: 'error' });
     await killSelectedTask('export-running-tasks', 'export', 'export-status');
+    setStatus('export-status', window.i18n[pageLang].statusError, 'var(--danger)');
     setBtnLoading(btn, false);
     updateTaskButtons('export');
   });
@@ -2330,6 +2611,7 @@
 
   // ── Apply i18n on load ──
   window.applyI18n(pageLang);
+  applyTrainResumeButton();
 
   // ── Fetch version from /health and display in title ──
   apiFetch('/health').then(data => {
@@ -2388,6 +2670,7 @@
       seedDefaultTrainDatasetIfEmpty();
       updateTrainTaskTypeUI(false);
       scheduleTrainCommandPreview();
+      refreshTrainResumeHint({ applyDir: true });
     }
     if (prefix === 'rlhf') {
       const records = await loadScopedRecords('rlhf', model, 'rlhf-record');
@@ -2686,6 +2969,7 @@
     trainRestoring = false;
     updateTrainTaskTypeUI(false);
     scheduleTrainCommandPreview();
+    refreshTrainResumeHint({ applyDir: true });
     return restoredParams;
   }
 
@@ -3070,6 +3354,7 @@
       sel.dispatchEvent(new Event('change'));
     }
     updateTrainKillBtn();
+    refreshTrainResumeHint({ applyDir: true });
   });
 
   // Load train records on page load and auto-restore last record if no task is running
@@ -3078,6 +3363,7 @@
     loadTrainRecords(initModel).then(records => {
       if (!records || records.length === 0) {
         seedDefaultTrainDatasetIfEmpty();
+        refreshTrainResumeHint({ applyDir: true });
         return;
       }
       // Check if a train task is running; if not, restore the last record
@@ -3091,9 +3377,12 @@
             maybeShowRecordLog('train', 'train-log', params);
             seedDefaultTrainDatasetIfEmpty();
           });
+        } else {
+          refreshTrainResumeHint({ applyDir: true });
         }
       } else {
         seedDefaultTrainDatasetIfEmpty();
+        clearTrainResumeHint();
       }
     });
   } else {
@@ -3143,6 +3432,7 @@
         sel.selectedIndex = 0;
         sel.dispatchEvent(new Event('change'));
       }
+      if (prefix === 'export') restoreExportPage();
     });
   });
   refreshRlhfTasks().then(() => {

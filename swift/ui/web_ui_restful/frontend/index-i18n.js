@@ -234,6 +234,7 @@ window.i18n = {
 
     // Buttons
     btnStart: '🚀 开始',
+    btnContinue: '继续',
     btnStop: '⏹ 停止',
     btnPreview: '📋 预览命令',
     btnDeploy: '🚀 部署模型',
@@ -544,6 +545,7 @@ window.i18n = {
 
     // Buttons
     btnStart: '🚀 Start',
+    btnContinue: 'Continue',
     btnStop: '⏹ Stop',
     btnPreview: '📋 Preview',
     btnDeploy: '🚀 Deploy',
